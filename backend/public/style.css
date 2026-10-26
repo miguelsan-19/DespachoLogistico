@@ -1,0 +1,88 @@
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0f1117;
+    color: #e6e8ee;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 24px;
+    background: #171a23;
+    border-bottom: 1px solid #2a2e3a;
+}
+
+header h1 { font-size: 1.2rem; margin: 0; }
+
+.status {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+.status.connected { background: #1d4d33; color: #6ee7a0; }
+.status.disconnected { background: #4d1d1d; color: #e76e6e; }
+
+main {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    height: calc(100vh - 57px);
+}
+
+#dashboard {
+    padding: 16px 20px;
+    overflow-y: auto;
+    border-right: 1px solid #2a2e3a;
+}
+
+.metric {
+    display: inline-block;
+    width: 31%;
+    text-align: center;
+    background: #171a23;
+    border-radius: 10px;
+    padding: 10px 4px;
+    margin-right: 2%;
+    margin-bottom: 14px;
+}
+.metric-value { display: block; font-size: 1.4rem; font-weight: 700; }
+.metric-label { display: block; font-size: 0.7rem; color: #9aa0ad; margin-top: 2px; }
+
+h2 { font-size: 0.95rem; margin: 18px 0 8px; color: #9aa0ad; }
+
+#vehicleList, #alertList { list-style: none; padding: 0; margin: 0; }
+
+#vehicleList li, #alertList li {
+    background: #171a23;
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+}
+
+#alertList li { border-left: 3px solid #e76e6e; }
+
+#incidentForm { display: flex; flex-direction: column; gap: 8px; }
+#incidentForm input {
+    background: #171a23;
+    border: 1px solid #2a2e3a;
+    border-radius: 6px;
+    padding: 8px;
+    color: #e6e8ee;
+}
+#incidentForm button {
+    background: #3b6fe0;
+    border: none;
+    border-radius: 6px;
+    padding: 8px;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+#mapSection { position: relative; }
+#map { height: 100%; width: 100%; }

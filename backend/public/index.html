@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Centro de Despacho Logístico</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Centro de Despacho Logístico</h1>
+        <div id="connectionStatus" class="status disconnected">Conectando...</div>
+    </header>
+
+    <main>
+        <section id="dashboard">
+            <div class="metric">
+                <span class="metric-value" id="activeCount">0</span>
+                <span class="metric-label">Unidades activas</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value" id="avgSpeed">0</span>
+                <span class="metric-label">Velocidad promedio (km/h)</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value" id="incidentCount">0</span>
+                <span class="metric-label">Incidencias reportadas</span>
+            </div>
+
+            <h2>Unidades</h2>
+            <ul id="vehicleList"></ul>
+
+            <h2>Alertas recientes</h2>
+            <ul id="alertList"></ul>
+
+            <h2>Reportar incidencia</h2>
+            <form id="incidentForm">
+                <input type="text" id="incidentVehicle" placeholder="ID de vehículo (ej. V001)" required>
+                <input type="text" id="incidentDesc" placeholder="Descripción" required>
+                <button type="submit">Reportar</button>
+            </form>
+        </section>
+
+        <section id="mapSection">
+            <div id="map"></div>
+        </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
