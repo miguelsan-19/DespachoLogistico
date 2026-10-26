@@ -11,7 +11,7 @@ simulator (UDP) --> backend: gateway UDP --> Socket.io --> frontend (dashboard +
 - **simulator/fleet-simulator.js**: proceso independiente que simula 3 vehículos moviéndose por rutas predefinidas y emite su telemetría (lat, lng, velocidad, estado) por un socket UDP crudo. No usa Socket.io.
 - **backend/server.js**: tiene dos servidores en paralelo:
   - Un **gateway UDP** (`dgram`) que recibe la telemetría del simulador, la valida y la guarda en memoria.
-  - Un servidor **Socket.io** que reemite esa telemetría en tiempo real a todos los navegadores conectados, y maneja el reporte de incidencias.
+  - Un servidor **Socket.io** que reemite esa telemetría en tiempo real a todos los navegadores conectados.
 - **backend/public/**: dashboard web (HTML/JS plano, sin framework) con mapa en vivo (Leaflet) y métricas.
 
 ## Cómo correrlo

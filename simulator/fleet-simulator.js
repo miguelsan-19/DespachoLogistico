@@ -67,25 +67,16 @@ function randomSpeed() {
     return Math.round(30 + Math.random() * 50); // 30-80 km/h
 }
 
-function maybeInjectAnomaly(vehicleId) {
-    // Pequena probabilidad de inyectar una anomalia para que el
-    // dashboard tenga algo real que mostrar como alerta
-    const roll = Math.random();
-    if (roll < 0.03) return 'parada_no_programada';
-    if (roll < 0.05) return 'desconexion';
-    return 'en_ruta';
-}
-
 function tick() {
     Object.keys(routes).forEach((vehicleId) => {
         const { lat, lng } = nextPosition(vehicleId);
-        const status = maybeInjectAnomaly(vehicleId);
+        const status = 'en_ruta';
 
         const payload = {
             vehicleId,
             lat: Number(lat.toFixed(6)),
             lng: Number(lng.toFixed(6)),
-            speed: status === 'en_ruta' ? randomSpeed() : 0,
+            speed: randomSpeed(),
             status,
             timestamp: Date.now(),
         };

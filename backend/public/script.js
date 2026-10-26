@@ -4,11 +4,8 @@ const socket = io();
 
 const statusEl = document.getElementById('connectionStatus');
 const vehicleListEl = document.getElementById('vehicleList');
-const alertListEl = document.getElementById('alertList');
 const activeCountEl = document.getElementById('activeCount');
 const avgSpeedEl = document.getElementById('avgSpeed');
-const incidentCountEl = document.getElementById('incidentCount');
-const incidentForm = document.getElementById('incidentForm');
 
 // --- Mapa ---
 const map = L.map('map').setView([-0.25, -78.50], 12);
@@ -18,7 +15,6 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 const markers = {}; // vehicleId -> L.marker
 const vehicles = {}; // vehicleId -> ultimo estado conocido
-let incidentCount = 0;
 
 function upsertMarker(v) {
     if (!markers[v.vehicleId]) {
@@ -48,17 +44,6 @@ function renderMetrics() {
         ? Math.round(list.reduce((sum, v) => sum + v.speed, 0) / list.length)
         : 0;
     avgSpeedEl.textContent = avg;
-    incidentCountEl.textContent = incidentCount;
-}
-
-function pushAlert(text) {
-    const li = document.createElement('li');
-    li.textContent = text;
-    alertListEl.prepend(li);
-    // mantener la lista corta
-    while (alertListEl.children.length > 8) {
-        alertListEl.removeChild(alertListEl.lastChild);
-    }
 }
 
 // --- Eventos Socket.io ---
@@ -77,7 +62,6 @@ socket.on('init', (data) => {
         vehicles[v.vehicleId] = v;
         upsertMarker(v);
     });
-    incidentCount = data.incidents.length;
     renderVehicleList();
     renderMetrics();
 });
@@ -87,24 +71,4 @@ socket.on('telemetry', (v) => {
     upsertMarker(v);
     renderVehicleList();
     renderMetrics();
-});
-
-socket.on('alert', (alert) => {
-    pushAlert(`⚠ ${alert.message}`);
-});
-
-socket.on('incident', (incident) => {
-    incidentCount += 1;
-    renderMetrics();
-    pushAlert(`📝 Incidencia en ${incident.vehicleId}: ${incident.description}`);
-});
-
-// --- Formulario de incidencias ---
-incidentForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const vehicleId = document.getElementById('incidentVehicle').value.trim();
-    const description = document.getElementById('incidentDesc').value.trim();
-    if (!vehicleId || !description) return;
-    socket.emit('reportIncident', { vehicleId, description });
-    incidentForm.reset();
 });

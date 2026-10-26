@@ -54,34 +54,14 @@ main {
 
 h2 { font-size: 0.95rem; margin: 18px 0 8px; color: #9aa0ad; }
 
-#vehicleList, #alertList { list-style: none; padding: 0; margin: 0; }
+#vehicleList { list-style: none; padding: 0; margin: 0; }
 
-#vehicleList li, #alertList li {
+#vehicleList li {
     background: #171a23;
     border-radius: 8px;
     padding: 8px 10px;
     margin-bottom: 6px;
     font-size: 0.85rem;
-}
-
-#alertList li { border-left: 3px solid #e76e6e; }
-
-#incidentForm { display: flex; flex-direction: column; gap: 8px; }
-#incidentForm input {
-    background: #171a23;
-    border: 1px solid #2a2e3a;
-    border-radius: 6px;
-    padding: 8px;
-    color: #e6e8ee;
-}
-#incidentForm button {
-    background: #3b6fe0;
-    border: none;
-    border-radius: 6px;
-    padding: 8px;
-    color: white;
-    font-weight: 600;
-    cursor: pointer;
 }
 
 #mapSection { position: relative; }
