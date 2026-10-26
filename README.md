@@ -37,13 +37,6 @@ Empieza a emitir telemetría de 3 vehículos (V001, V002, V003) cada 2 segundos.
 
 Abre http://localhost:3000 en el navegador — vas a ver los 3 vehículos moviéndose en el mapa en tiempo real, y si abres varias pestañas, todas se actualizan a la vez (eso es lo que demuestra la sincronización de estado vía WebSockets).
 
-## Qué falta para completar el alcance del Lab2 (sección de preguntas/actividades)
-
-Ya cubre: temperatura en vivo, múltiples clientes sincronizados, alertas de anomalías. Si el profe pide además lo de la guía del Lab2 (nombre sobre el asiento, tooltip, precios, panel de administrador), lo equivalente acá sería:
-- Mostrar el conductor/placa asignado a cada vehículo (como el "nombre sobre el asiento")
-- Tooltip con detalle al pasar el mouse sobre un marcador (ya hay un popup básico, se puede enriquecer)
-- Vista de administrador separada con todas las unidades, incidencias y botón de "resetear simulación"
-
 ## Qué queda para Fase 2 y 3 (no es parte de este parcial)
 
 - Autenticación JWT para despachadores
