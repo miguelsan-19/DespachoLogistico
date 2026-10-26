@@ -37,6 +37,8 @@ Empieza a emitir telemetría de 3 vehículos (V001, V002, V003) cada 2 segundos.
 
 Abre http://localhost:3000 en el navegador — vas a ver los 3 vehículos moviéndose en el mapa en tiempo real, y si abres varias pestañas, todas se actualizan a la vez (eso es lo que demuestra la sincronización de estado vía WebSockets).
 
+##prueba
+
 ## Qué queda para Fase 2 y 3 (no es parte de este parcial)
 
 - Autenticación JWT para despachadores
