@@ -4,35 +4,262 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Centro de Despacho Logístico</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <h1>Centro de Despacho Logístico</h1>
-        <div id="connectionStatus" class="status disconnected">Conectando...</div>
-    </header>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary px-3">
+        <span class="navbar-brand mb-0 h1">🚚 Centro de Despacho Logístico</span>
+        <ul class="nav nav-pills ms-auto me-3" id="roleSwitch">
+            <li class="nav-item"><button class="nav-link role-btn active" data-role="admin">Administrador</button></li>
+            <li class="nav-item"><button class="nav-link role-btn" data-role="cliente">Cliente</button></li>
+            <li class="nav-item"><button class="nav-link role-btn" data-role="chofer">Chofer</button></li>
+        </ul>
+        <span id="connectionStatus" class="badge bg-secondary">Conectando...</span>
+    </nav>
 
-    <main>
-        <section id="dashboard">
-            <div class="metric">
-                <span class="metric-value" id="activeCount">0</span>
-                <span class="metric-label">Unidades activas</span>
-            </div>
-            <div class="metric">
-                <span class="metric-value" id="avgSpeed">0</span>
-                <span class="metric-label">Velocidad promedio (km/h)</span>
-            </div>
+    <main class="container-fluid p-0">
+        <!-- ================= PANEL ADMINISTRADOR ================= -->
+        <section id="panel-admin" class="panel d-flex flex-row g-0 w-100" style="height: calc(100vh - 56px);">
+            <!-- Sidebar de Módulos -->
+            <nav class="admin-sidebar d-flex flex-column flex-shrink-0 p-3" style="width: 215px;">
+                <div class="text-uppercase small fw-bold text-muted mb-3 px-2" style="font-size: 0.72rem; letter-spacing: 0.5px;">Módulos Admin</div>
+                <ul class="nav nav-pills flex-column gap-1 mb-auto">
+                    <li class="nav-item">
+                        <a href="#" class="admin-nav-link active" data-module="monitoreo">
+                            <span>📊 Monitoreo</span>
+                            <span class="badge bg-success ms-auto" id="sidebarBadgeUnidades">0</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#" class="admin-nav-link" data-module="clientes">
+                            <span>👤 Clientes</span>
+                            <span class="badge bg-secondary ms-auto" id="sidebarBadgeClientes">0</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#" class="admin-nav-link" data-module="choferes">
+                            <span>🧑‍✈️ Choferes</span>
+                            <span class="badge bg-secondary ms-auto" id="sidebarBadgeChoferes">0</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#" class="admin-nav-link" data-module="rutas">
+                            <span>🗺️ Rutas</span>
+                            <span class="badge bg-secondary ms-auto" id="sidebarBadgeRutas">0</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#" class="admin-nav-link" data-module="envios">
+                            <span>📦 Envíos</span>
+                            <span class="badge bg-secondary ms-auto" id="sidebarBadgeEnvios">0</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
 
-            <h2>Unidades</h2>
-            <ul id="vehicleList"></ul>
+            <!-- Panel de Contenido del Módulo Activo -->
+            <aside id="dashboard" class="admin-module-panel p-3 border-end" style="width: 380px; flex-shrink: 0;">
+                <!-- MÓDULO 1: Monitoreo en vivo -->
+                <div id="module-monitoreo" class="admin-module-content">
+                    <h6 class="fw-bold mb-3 d-flex align-items-center gap-2">
+                        📊 Métricas y Flota en Vivo
+                    </h6>
+                    <div class="row text-center mb-3 g-2">
+                        <div class="col-4">
+                            <div class="card bg-light border-0 shadow-sm"><div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-primary" id="activeCount">0</div>
+                                <div class="small text-muted" style="font-size: 0.72rem;">Unidades</div>
+                            </div></div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-light border-0 shadow-sm"><div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-success" id="avgSpeed">0</div>
+                                <div class="small text-muted" style="font-size: 0.72rem;">Vel. prom.</div>
+                            </div></div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-light border-0 shadow-sm"><div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-danger" id="incidentCount">0</div>
+                                <div class="small text-muted" style="font-size: 0.72rem;">Incidencias</div>
+                            </div></div>
+                        </div>
+                    </div>
+
+                    <h6 class="text-uppercase text-muted mt-3" style="font-size: 0.75rem;">Unidades en ruta</h6>
+                    <ul class="list-group list-group-flush mb-3" id="vehicleList"></ul>
+
+                    <h6 class="text-uppercase text-muted mt-3" style="font-size: 0.75rem;">Alertas recientes</h6>
+                    <ul class="list-group list-group-flush mb-3" id="alertList"></ul>
+                </div>
+
+                <!-- MÓDULO 2: Clientes -->
+                <div id="module-clientes" class="admin-module-content d-none">
+                    <h6 class="fw-bold mb-3">👤 Gestión de Clientes</h6>
+                    <div class="card mb-3 border-0 bg-light shadow-sm">
+                        <div class="card-body p-3">
+                            <span class="small fw-semibold text-muted d-block mb-2">Registrar nuevo cliente</span>
+                            <form id="clienteForm" class="row g-2">
+                                <div class="col-12"><input type="text" class="form-control form-control-sm" id="clienteNombre" placeholder="Nombre del cliente" required></div>
+                                <div class="col-12"><input type="text" class="form-control form-control-sm" id="clienteTelefono" placeholder="Teléfono de contacto"></div>
+                                <div class="col-12"><button type="submit" class="btn btn-sm btn-primary w-100">+ Guardar cliente</button></div>
+                            </form>
+                        </div>
+                    </div>
+                    <span class="small fw-semibold text-muted d-block mb-2">Clientes registrados</span>
+                    <ul class="list-group list-group-flush small" id="clienteList"></ul>
+                </div>
+
+                <!-- MÓDULO 3: Choferes -->
+                <div id="module-choferes" class="admin-module-content d-none">
+                    <h6 class="fw-bold mb-3">🧑‍✈️ Gestión de Choferes</h6>
+                    <div class="card mb-3 border-0 bg-light shadow-sm">
+                        <div class="card-body p-3">
+                            <span class="small fw-semibold text-muted d-block mb-2">Registrar chofer y asignar vehículo</span>
+                            <form id="choferForm">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-12"><input type="text" class="form-control form-control-sm" id="choferNombre" placeholder="Nombre completo del chofer" required></div>
+                                    <div class="col-12"><input type="text" class="form-control form-control-sm" id="choferCedula" placeholder="Número de cédula"></div>
+                                </div>
+                                <label class="form-label small text-muted mb-1">Elige el vehículo asignado:</label>
+                                <div class="vehicle-picker mb-3" id="choferVehiculoPicker"></div>
+                                <input type="hidden" id="choferVehiculo">
+                                <button type="submit" class="btn btn-sm btn-primary w-100">+ Agregar chofer</button>
+                            </form>
+                        </div>
+                    </div>
+                    <span class="small fw-semibold text-muted d-block mb-2">Choferes registrados</span>
+                    <ul class="list-group list-group-flush small mt-2" id="choferList"></ul>
+                </div>
+
+                <!-- MÓDULO 4: Rutas -->
+                <div id="module-rutas" class="admin-module-content d-none">
+                    <h6 class="fw-bold mb-3">🗺️ Gestión de Rutas</h6>
+                    <div class="card mb-3 border-0 bg-light shadow-sm">
+                        <div class="card-body p-3">
+                            <span class="small fw-semibold text-muted d-block mb-2">Crear nueva ruta</span>
+                            <form id="rutaForm">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-12"><input type="text" class="form-control form-control-sm" id="rutaNombre" placeholder="Nombre de la ruta" required></div>
+                                    <div class="col-6"><input type="text" class="form-control form-control-sm" id="rutaOrigen" placeholder="Origen"></div>
+                                    <div class="col-6"><input type="text" class="form-control form-control-sm" id="rutaDestino" placeholder="Destino"></div>
+                                </div>
+                                <label class="form-label small text-muted mb-1">Elige el chofer para esta ruta:</label>
+                                <div class="driver-picker mb-3" id="rutaChoferPicker"></div>
+                                <input type="hidden" id="rutaChofer">
+                                <button type="submit" class="btn btn-sm btn-primary w-100">+ Crear ruta</button>
+                            </form>
+                        </div>
+                    </div>
+                    <span class="small fw-semibold text-muted d-block mb-2">Rutas existentes</span>
+                    <ul class="list-group list-group-flush small mt-2" id="rutaList"></ul>
+                </div>
+
+                <!-- MÓDULO 5: Envíos -->
+                <div id="module-envios" class="admin-module-content d-none">
+                    <h6 class="fw-bold mb-3">📦 Historial de Envíos (Todos)</h6>
+                    <ul class="list-group list-group-flush small" id="envioListAdmin"></ul>
+                </div>
+            </aside>
+
+            <!-- Mapa Principal -->
+            <div class="flex-grow-1" style="height: calc(100vh - 56px); position: relative;">
+                <div id="map" style="height: 100%; width: 100%;"></div>
+            </div>
         </section>
 
-        <section id="mapSection">
-            <div id="map"></div>
+        <!-- ================= PANEL CLIENTE ================= -->
+        <section id="panel-cliente" class="panel d-none">
+            <div class="container py-4" style="max-width: 600px;">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h4 class="card-title mb-3">📦 Portal del Cliente</h4>
+                        <label class="form-label">Tu ID de cliente <small class="text-muted">(te lo da el administrador al registrarte)</small></label>
+                        <input type="text" class="form-control mb-3" id="clienteIdInput" placeholder="Ej. C1">
+
+                        <h6 class="text-uppercase text-muted mt-4">Crear envío</h6>
+                        <form id="envioForm" class="row g-2">
+                            <div class="col-12">
+                                <label class="form-label small text-muted mb-1">Descripción del paquete:</label>
+                                <input type="text" class="form-control form-control-sm" id="envioDescripcion" placeholder="Descripción del paquete" required>
+                            </div>
+
+                            <!-- Mini mapa para seleccionar ubicación -->
+                            <div class="col-12 my-2">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label small text-muted mb-0"><b>🗺️ Mini mapa de envío:</b></label>
+                                    <span class="badge bg-light text-primary border" id="clientCoordsLabel" style="font-size: 0.75rem;">Haz clic en el mapa</span>
+                                </div>
+                                <div id="clientMap" style="height: 230px; width: 100%; border-radius: 8px; border: 1px solid #ced4da;"></div>
+                                <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-1">
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <input type="radio" class="btn-check" name="mapTarget" id="targetOrigen" value="origen" checked autocomplete="off">
+                                        <label class="btn btn-outline-success btn-sm py-0" for="targetOrigen" style="font-size: 0.75rem;">🟢 1. Fijar Origen (buscar vehículos)</label>
+
+                                        <input type="radio" class="btn-check" name="mapTarget" id="targetDestino" value="destino" autocomplete="off">
+                                        <label class="btn btn-outline-danger btn-sm py-0" for="targetDestino" style="font-size: 0.75rem;">🔴 2. Fijar Destino (entrega)</label>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="btnClientGps" style="font-size: 0.75rem;" title="Usar mi ubicación GPS actual">
+                                        🎯 Mi GPS
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Vehículos disponibles en la zona del origen -->
+                            <div class="col-12 my-2" id="nearbyVehiclesSection" style="display: none;">
+                                <div class="p-2 border rounded bg-light">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span class="small fw-bold text-dark">🚗 Vehículos en la zona de origen:</span>
+                                        <span class="badge bg-secondary" id="selectedVehicleBadge" style="font-size: 0.75rem;">Ninguno seleccionado</span>
+                                    </div>
+                                    <div id="nearbyVehiclesList" class="d-flex flex-wrap gap-2"></div>
+                                    <input type="hidden" id="envioVehiculo" value="">
+                                </div>
+                            </div>
+
+                            <div class="col-6">
+                                <label class="form-label small text-muted mb-1">Origen:</label>
+                                <input type="text" class="form-control form-control-sm" id="envioOrigen" placeholder="Origen" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted mb-1">Destino:</label>
+                                <input type="text" class="form-control form-control-sm" id="envioDestino" placeholder="Destino" required>
+                            </div>
+                            <div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100">Crear envío</button></div>
+                        </form>
+
+                        <h6 class="text-uppercase text-muted mt-4">Mis envíos</h6>
+                        <ul class="list-group" id="envioListCliente"></ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= PANEL CHOFER ================= -->
+        <section id="panel-chofer" class="panel d-none">
+            <div class="container py-4" style="max-width: 560px;">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h4 class="card-title mb-3">🧑‍✈️ Portal del Chofer</h4>
+                        <label class="form-label">Selecciona tu usuario:</label>
+                        <select class="form-select mb-3" id="choferIdInput"></select>
+
+                        <h6 class="text-uppercase text-muted mt-3">Tu vehículo y ruta</h6>
+                        <div id="choferInfo" class="alert alert-light border">Selecciona tu usuario para ver tu información.</div>
+
+                        <h6 class="text-uppercase text-muted mt-4">Reportar incidencia</h6>
+                        <form id="incidentForm" class="row g-2">
+                            <div class="col-12"><input type="text" class="form-control" id="incidentDesc" placeholder="Descripción de la incidencia" required></div>
+                            <div class="col-12"><button type="submit" class="btn btn-danger w-100">Reportar</button></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>

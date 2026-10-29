@@ -11,7 +11,7 @@ simulator (UDP) --> backend: gateway UDP --> Socket.io --> frontend (dashboard +
 - **simulator/fleet-simulator.js**: proceso independiente que simula 3 vehículos moviéndose por rutas predefinidas y emite su telemetría (lat, lng, velocidad, estado) por un socket UDP crudo. No usa Socket.io.
 - **backend/server.js**: tiene dos servidores en paralelo:
   - Un **gateway UDP** (`dgram`) que recibe la telemetría del simulador, la valida y la guarda en memoria.
-  - Un servidor **Socket.io** que reemite esa telemetría en tiempo real a todos los navegadores conectados.
+  - Un servidor **Socket.io** que reemite esa telemetría en tiempo real a todos los navegadores conectados, y maneja el reporte de incidencias.
 - **backend/public/**: dashboard web (HTML/JS plano, sin framework) con mapa en vivo (Leaflet) y métricas.
 
 ## Cómo correrlo
@@ -37,7 +37,22 @@ Empieza a emitir telemetría de 3 vehículos (V001, V002, V003) cada 2 segundos.
 
 Abre http://localhost:3000 en el navegador — vas a ver los 3 vehículos moviéndose en el mapa en tiempo real, y si abres varias pestañas, todas se actualizan a la vez (eso es lo que demuestra la sincronización de estado vía WebSockets).
 
-##prueba
+## Roles (sin login, solo selector)
+
+El dashboard tiene 3 botones arriba para cambiar de rol — no hay usuario/contraseña todavía (eso es Fase 2 con JWT), cada quien se identifica con su ID para ver solo lo suyo:
+
+- **Administrador**: ve el mapa en vivo, da de alta Clientes, Choferes y Rutas (asignando chofer + vehículo), y ve todos los envíos.
+- **Cliente**: escribe su ID de cliente (se lo da el administrador cuando lo crea, ej. `C1`), crea envíos y ve el estado de los suyos.
+- **Chofer**: elige su usuario de una lista, ve su vehículo/ruta asignada en vivo, y reporta incidencias.
+
+Para probarlo de punta a punta: entra como Administrador, crea un cliente y un chofer (asígnale un vehículo, ej. V001), crea una ruta con ese chofer. Luego cambia a Cliente, pon el ID que te dio el admin (ej. `C1`) y crea un envío. Cambia a Chofer, elige el chofer que creaste, y repórtale una incidencia — todo se sincroniza en vivo entre las 3 vistas (y entre pestañas/computadoras distintas).
+
+## Qué falta para completar el alcance del Lab2 (sección de preguntas/actividades)
+
+Ya cubre: temperatura en vivo, múltiples clientes sincronizados, alertas de anomalías. Si el profe pide además lo de la guía del Lab2 (nombre sobre el asiento, tooltip, precios, panel de administrador), lo equivalente acá sería:
+- Mostrar el conductor/placa asignado a cada vehículo (como el "nombre sobre el asiento")
+- Tooltip con detalle al pasar el mouse sobre un marcador (ya hay un popup básico, se puede enriquecer)
+- Vista de administrador separada con todas las unidades, incidencias y botón de "resetear simulación"
 
 ## Qué queda para Fase 2 y 3 (no es parte de este parcial)
 

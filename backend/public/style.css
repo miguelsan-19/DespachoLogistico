@@ -1,68 +1,201 @@
-* { box-sizing: border-box; }
-
 body {
-    margin: 0;
-    font-family: system-ui, -apple-system, sans-serif;
-    background: #0f1117;
-    color: #e6e8ee;
+    background-color: #f7f7f7;
 }
 
-header {
+#map { height: calc(100vh - 56px); width: 100%; }
+
+.panel.d-none { display: none; }
+
+.role-btn { cursor: pointer; border: none; background: transparent; }
+
+/* ---------------------------------------------------------------------
+   Selector tipo "asiento de cine": una cajita por vehiculo/chofer que
+   se clickea para seleccionar, igual que en el Lab2 (seat / seat.reserved)
+--------------------------------------------------------------------- */
+.vehicle-picker, .driver-picker {
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pick-box {
+    width: 64px;
+    height: 54px;
+    background-color: lightgray;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    padding: 14px 24px;
-    background: #171a23;
-    border-bottom: 1px solid #2a2e3a;
-}
-
-header h1 { font-size: 1.2rem; margin: 0; }
-
-.status {
-    padding: 4px 12px;
-    border-radius: 999px;
-    font-size: 0.8rem;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.72rem;
     font-weight: 600;
-}
-.status.connected { background: #1d4d33; color: #6ee7a0; }
-.status.disconnected { background: #4d1d1d; color: #e76e6e; }
-
-main {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    height: calc(100vh - 57px);
-}
-
-#dashboard {
-    padding: 16px 20px;
-    overflow-y: auto;
-    border-right: 1px solid #2a2e3a;
-}
-
-.metric {
-    display: inline-block;
-    width: 31%;
+    color: #333;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+    user-select: none;
     text-align: center;
-    background: #171a23;
-    border-radius: 10px;
-    padding: 10px 4px;
-    margin-right: 2%;
-    margin-bottom: 14px;
+    padding: 2px;
 }
-.metric-value { display: block; font-size: 1.4rem; font-weight: 700; }
-.metric-label { display: block; font-size: 0.7rem; color: #9aa0ad; margin-top: 2px; }
 
-h2 { font-size: 0.95rem; margin: 18px 0 8px; color: #9aa0ad; }
+.pick-box:hover { transform: translateY(-2px); }
 
-#vehicleList { list-style: none; padding: 0; margin: 0; }
+.pick-box.selected {
+    background-color: #007bff;
+    color: white;
+}
 
-#vehicleList li {
-    background: #171a23;
+.pick-box.ocupado {
+    background-color: #ffc107;
+}
+
+.pick-box.ocupado.selected {
+    background-color: #0056b3;
+}
+
+.pick-box .pick-sub { font-size: 0.62rem; opacity: 0.85; }
+
+/* ---------------------------------------------------------------------
+   Marcadores y colores por vehiculo en el mapa y la interfaz
+--------------------------------------------------------------------- */
+.vehicle-marker {
+    background: transparent !important;
+    border: none !important;
+}
+
+.vehicle-pin {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.35));
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    cursor: pointer;
+}
+
+.vehicle-pin:hover {
+    transform: scale(1.18);
+    filter: drop-shadow(0 5px 9px rgba(0, 0, 0, 0.5));
+}
+
+.vehicle-color-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.25);
+}
+
+/* ---------------------------------------------------------------------
+   Mini mapa del portal del cliente
+--------------------------------------------------------------------- */
+.client-marker-icon, .custom-map-pin {
+    background: transparent !important;
+    border: none !important;
+}
+
+#clientMap {
+    z-index: 1;
+}
+
+/* Tarjetas interactivas de vehiculos cercanos */
+.client-vehicle-card {
+    border: 2px solid #dee2e6;
     border-radius: 8px;
     padding: 8px 10px;
-    margin-bottom: 6px;
-    font-size: 0.85rem;
+    background: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1 1 calc(50% - 8px);
+    min-width: 140px;
+    user-select: none;
 }
 
-#mapSection { position: relative; }
-#map { height: 100%; width: 100%; }
+.client-vehicle-card:hover {
+    border-color: #0d6efd;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
+}
+
+.client-vehicle-card.selected {
+    border-color: #0d6efd;
+    background-color: #f0f7ff;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+
+.client-vehicle-card.locked {
+    opacity: 0.65;
+    cursor: not-allowed;
+    background-color: #f8f9fa;
+    border-color: #dc3545;
+}
+
+.client-vehicle-card.locked:hover {
+    border-color: #dc3545;
+    transform: none;
+    box-shadow: none;
+}
+
+.client-vehicle-card.disabled-no-driver {
+    opacity: 0.55;
+    cursor: not-allowed;
+    background-color: #f1f3f5;
+    border-color: #ced4da;
+}
+
+.client-vehicle-card.disabled-no-driver:hover {
+    border-color: #ced4da;
+    transform: none;
+    box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------
+   Sidebar de módulos del Administrador
+--------------------------------------------------------------------- */
+.admin-sidebar {
+    background-color: #1a1e24;
+    border-right: 1px solid #2a2f38;
+}
+
+.admin-nav-link {
+    color: #9aa0a6;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 10px 14px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    transition: all 0.18s ease;
+}
+
+.admin-nav-link:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.admin-nav-link.active {
+    color: #ffffff;
+    background-color: #0d6efd;
+    font-weight: 600;
+}
+
+.admin-nav-link.active .badge {
+    background-color: #ffffff !important;
+    color: #0d6efd !important;
+}
+
+.admin-module-panel {
+    background-color: #ffffff;
+    height: calc(100vh - 56px);
+    overflow-y: auto;
+}
+
+.admin-module-content {
+    animation: fadeInModule 0.15s ease-in-out;
+}
+
+@keyframes fadeInModule {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
+}
