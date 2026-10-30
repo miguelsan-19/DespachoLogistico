@@ -95,7 +95,12 @@
             let cls = 'amo-pick'; if (!hasDriver || bloqueadoPorOtro) cls += ' disabled'; if (bloqueadoPorOtro) cls += ' taken'; if (esMio) cls += ' selected';
             const driver = choferDe(v.vehicleId);
             const texto = !hasDriver ? 'Sin chofer' : bloqueadoPorOtro ? 'Ocupado' : `${v.vehicleId} · ${v.distancia}km`;
-            return `<button type="button" class="${cls}" data-veh="${v.vehicleId}" title="${driver ? driver.nombre : ''}">${AMO.esc(texto)}</button>`;
+            const tip = !hasDriver
+                ? `Unidad ${v.vehicleId} sin chofer asignado.`
+                : bloqueadoPorOtro
+                    ? `Unidad ${v.vehicleId} ocupada. Espera su liberación.`
+                    : `${driver.nombre} · ${v.distancia} km de distancia`;
+            return `<button type="button" class="${cls}" data-veh="${v.vehicleId}" data-bs-toggle="tooltip" data-bs-placement="top" title="${AMO.esc(tip)}">${AMO.esc(texto)}</button>`;
         }).join('');
         cont.querySelectorAll('[data-veh]').forEach(btn => btn.addEventListener('click', () => {
             const v = lista.find(x => x.vehicleId === btn.dataset.veh);
@@ -103,6 +108,12 @@
             if (!hasDriver || bloqueadoPorOtro) return;
             alternarSeleccion(v.vehicleId);
         }));
+        // Reinicia los tooltips de Bootstrap tras cada repintado (se pierden al reemplazar el HTML)
+        cont.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+            const previo = bootstrap.Tooltip.getInstance(el);
+            if (previo) previo.dispose();
+            new bootstrap.Tooltip(el);
+        });
     }
 
     function iniciarTemporizador(vehicleId) {
