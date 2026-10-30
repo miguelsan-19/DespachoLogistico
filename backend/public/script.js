@@ -415,7 +415,6 @@ const clienteIdInput = document.getElementById('clienteIdInput');
 const envioForm = document.getElementById('envioForm');
 const envioListClienteEl = document.getElementById('envioListCliente');
 const clientCoordsLabel = document.getElementById('clientCoordsLabel');
-const btnClientGps = document.getElementById('btnClientGps');
 
 let clientMap = null;
 let originMarker = null;
@@ -431,6 +430,76 @@ const activeDynamicRoutes = {};
 const adminRouteLayers = {};
 const clientRouteLayers = {};
 let activeSelectedEnvioId = null;
+
+// Temporizador de selección: 15 segundos para confirmar el pedido
+let vehicleSelectionTimer = null;
+let vehicleSelectionSecondsLeft = 0;
+
+function startVehicleSelectionTimer(vehicleId) {
+    stopVehicleSelectionTimer();
+    vehicleSelectionSecondsLeft = 15;
+    updateTimerBadgeUI(vehicleSelectionSecondsLeft);
+
+    vehicleSelectionTimer = setInterval(() => {
+        vehicleSelectionSecondsLeft--;
+        if (vehicleSelectionSecondsLeft <= 0) {
+            stopVehicleSelectionTimer();
+            deseleccionarVehiculoPorTiempo(vehicleId);
+        } else {
+            updateTimerBadgeUI(vehicleSelectionSecondsLeft);
+        }
+    }, 1000);
+}
+
+function stopVehicleSelectionTimer() {
+    if (vehicleSelectionTimer) {
+        clearInterval(vehicleSelectionTimer);
+        vehicleSelectionTimer = null;
+    }
+    vehicleSelectionSecondsLeft = 0;
+    const badge = document.getElementById('selectionCountdownBadge');
+    if (badge) {
+        badge.classList.add('d-none');
+    }
+    document.querySelectorAll('.card-timer-text').forEach(el => {
+        el.textContent = '';
+    });
+}
+
+function updateTimerBadgeUI(seconds) {
+    const badge = document.getElementById('selectionCountdownBadge');
+    if (badge) {
+        badge.classList.remove('d-none');
+        badge.textContent = `⏱️ ${seconds}s`;
+        badge.className = 'badge bg-light text-dark border'; // Neutro sin colores
+    }
+
+    document.querySelectorAll('.card-timer-text').forEach(el => {
+        el.textContent = `(${seconds}s)`;
+    });
+}
+
+function deseleccionarVehiculoPorTiempo(vehicleId) {
+    const vId = vehicleId || selectedClientVehicleId;
+    if (!vId) return;
+
+    console.warn(`[Temporizador] Tiempo agotado (15s): Deseleccionando vehículo ${vId}`);
+    socket.emit('vehiculo:desbloquear', { vehicleId: vId });
+
+    selectedClientVehicleId = null;
+
+    const hidden = document.getElementById('envioVehiculo');
+    if (hidden) hidden.value = '';
+
+    const badge = document.getElementById('selectedVehicleBadge');
+    if (badge) {
+        badge.style.backgroundColor = '';
+        badge.className = 'badge bg-secondary';
+        badge.textContent = 'Ninguno seleccionado';
+    }
+
+    if (originCoords) updateNearbyVehicles();
+}
 
 // Obtener chofer asignado a un vehículo
 function getDriverForVehicle(vehicleId) {
@@ -502,29 +571,6 @@ function initClientMap() {
     clientMap.on('click', (e) => {
         handleClientMapClick(e.latlng.lat, e.latlng.lng);
     });
-
-    if (btnClientGps) {
-        btnClientGps.addEventListener('click', () => {
-            if (!navigator.geolocation) {
-                alert('La geolocalización no está soportada en tu navegador.');
-                return;
-            }
-            btnClientGps.textContent = 'Buscando...';
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    btnClientGps.textContent = '🎯 Mi GPS';
-                    const { latitude, longitude } = pos.coords;
-                    clientMap.setView([latitude, longitude], 14);
-                    handleClientMapClick(latitude, longitude);
-                },
-                (err) => {
-                    btnClientGps.textContent = '🎯 Mi GPS';
-                    alert('No se pudo obtener tu ubicación actual: ' + err.message);
-                },
-                { timeout: 8000 }
-            );
-        });
-    }
 }
 
 async function updateAddressFromCoords(lat, lng, targetInputId) {
@@ -651,10 +697,7 @@ function updateNearbyVehicles() {
             }).addTo(clientMap);
 
             clientVehicleMarkers[v.vehicleId].on('click', () => {
-                if (!getDriverForVehicle(v.vehicleId)) {
-                    alert(`⚠ El vehículo ${v.vehicleId} no puede ser seleccionado porque no tiene chofer asignado.`);
-                    return;
-                }
+                if (!getDriverForVehicle(v.vehicleId)) return;
                 toggleVehicleSelection(v.vehicleId);
             });
         } else {
@@ -665,36 +708,34 @@ function updateNearbyVehicles() {
         let popupLockBadge = '';
         if (!hasDriver) {
             popupLockBadge = '<span class="badge bg-secondary ms-auto" style="font-size:0.7rem;">⚠️ Sin chofer</span>';
-            popupBtnHtml = `
-                <div class="small text-muted mt-1">No disponible (sin chofer asignado)</div>
-                <button type="button" class="btn btn-sm btn-secondary mt-2 w-100 py-0" style="font-size:0.75rem;" disabled>
-                    Sin chofer asignado
-                </button>
-            `;
+            popupBtnHtml = '<div class="small text-muted mt-1">Sin chofer asignado</div>';
         } else if (isLockedByOther) {
             popupLockBadge = '<span class="badge bg-danger ms-auto" style="font-size:0.7rem;">🔒 Bloqueado</span>';
+            popupBtnHtml = '<div class="small text-danger mt-1">Ocupado por otro cliente</div>';
+        } else if (isLockedByMe || selectedClientVehicleId === v.vehicleId) {
+            // Cuando se selecciona al conductor: NO mostrar botón de bloquear y seleccionar
+            popupLockBadge = '<span class="badge bg-success ms-auto" style="font-size:0.7rem;">✓ Seleccionado</span>';
             popupBtnHtml = `
-                <div class="small text-danger mt-1">Ocupado por otro cliente</div>
-                <button type="button" class="btn btn-sm btn-secondary mt-2 w-100 py-0" style="font-size:0.75rem;" disabled>
-                    No disponible
+                <div class="small text-success fw-bold mt-1">✓ Conductor seleccionado</div>
+                <button type="button" class="btn btn-sm btn-outline-danger mt-1 w-100 py-0" style="font-size:0.75rem;" onclick="toggleVehicleSelection('${v.vehicleId}')">
+                    Desmarcar
                 </button>
             `;
-        } else if (isLockedByMe || selectedClientVehicleId === v.vehicleId) {
-            popupLockBadge = '<span class="badge bg-success ms-auto" style="font-size:0.7rem;">✓ Reservado por ti</span>';
+        } else if (selectedClientVehicleId) {
             popupBtnHtml = `
-                <button type="button" class="btn btn-sm btn-outline-danger mt-2 w-100 py-0" style="font-size:0.75rem;" onclick="toggleVehicleSelection('${v.vehicleId}')">
-                    Desmarcar vehículo
+                <button type="button" class="btn btn-sm btn-outline-primary mt-2 w-100 py-0" style="font-size:0.75rem;" onclick="toggleVehicleSelection('${v.vehicleId}')">
+                    Cambiar a este conductor
                 </button>
             `;
         } else {
             popupBtnHtml = `
                 <button type="button" class="btn btn-sm btn-primary mt-2 w-100 py-0" style="font-size:0.75rem;" onclick="toggleVehicleSelection('${v.vehicleId}')">
-                    Bloquear y seleccionar
+                    Seleccionar conductor
                 </button>
             `;
         }
 
-        clientVehicleMarkers[v.vehicleId].bindPopup(`
+        const popupContent = `
             <div style="font-size:0.85rem; min-width: 140px;">
                 <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
                     <span class="vehicle-color-dot" style="background-color:${color}; width:10px; height:10px;"></span>
@@ -705,7 +746,13 @@ function updateNearbyVehicles() {
                 <div class="small text-muted">${driver ? `Chofer: ${driver.nombre}` : 'Sin chofer'} · ${v.speed} km/h</div>
                 ${popupBtnHtml}
             </div>
-        `);
+        `;
+
+        if (clientVehicleMarkers[v.vehicleId].getPopup()) {
+            clientVehicleMarkers[v.vehicleId].setPopupContent(popupContent);
+        } else {
+            clientVehicleMarkers[v.vehicleId].bindPopup(popupContent);
+        }
     });
 
     renderNearbyVehiclesUI(vehicleList);
@@ -748,11 +795,11 @@ function renderNearbyVehiclesUI(vehicleList) {
             lockBadge = '<span class="badge bg-danger" style="font-size: 0.7rem;">🔒 Bloqueado</span>';
             statusText = '<div class="text-danger small mt-1" style="font-size:0.72rem;">Bloqueado por otro cliente</div>';
         } else if (isSelected) {
-            lockBadge = '<span class="badge bg-primary" style="font-size: 0.7rem;">✓ Reservado</span>';
-            statusText = '<div class="text-success small fw-bold mt-1" style="font-size:0.72rem;">✓ Bloqueado por ti (clic para desmarcar)</div>';
+            lockBadge = '<span class="badge bg-primary" style="font-size: 0.7rem;">✓ Seleccionado</span>';
+            statusText = '<div class="text-success small fw-bold mt-1" style="font-size:0.72rem;">✓ Conductor asignado (clic para desmarcar)</div>';
         } else {
             lockBadge = `<span class="badge ${v.distance <= 12 ? 'bg-success' : 'bg-secondary'}" style="font-size: 0.72rem;">${v.distance} km</span>`;
-            statusText = '<div class="text-muted small mt-1" style="font-size:0.72rem;">Clic para bloquear y seleccionar</div>';
+            statusText = '<div class="text-muted small mt-1" style="font-size:0.72rem;">Clic para seleccionar conductor</div>';
         }
 
         card.className = cardClass;
@@ -772,10 +819,7 @@ function renderNearbyVehiclesUI(vehicleList) {
         `;
 
         card.addEventListener('click', () => {
-            if (!hasDriver) {
-                alert(`⚠ El vehículo ${v.vehicleId} no puede ser seleccionado porque aún no tiene un chofer asignado.`);
-                return;
-            }
+            if (!hasDriver) return;
             toggleVehicleSelection(v.vehicleId);
         });
 
@@ -786,21 +830,15 @@ function renderNearbyVehiclesUI(vehicleList) {
 // Bloquear / desmarcar un vehículo en tiempo real vía WebSockets
 window.toggleVehicleSelection = function(vehicleId) {
     const driver = getDriverForVehicle(vehicleId);
-    if (!driver) {
-        alert(`⚠ El vehículo ${vehicleId} no puede ser seleccionado porque no tiene un chofer asignado.`);
-        return;
-    }
+    if (!driver) return;
 
     const lock = lockedVehicles[vehicleId];
     const isLockedByOther = lock && lock.socketId !== socket.id;
-
-    if (isLockedByOther) {
-        alert(`⚠ El vehículo ${vehicleId} ya está bloqueado por otro cliente en tiempo real.`);
-        return;
-    }
+    if (isLockedByOther) return;
 
     // Si ya lo tiene seleccionado: DESMARCAR y DESBLOQUEAR
     if (selectedClientVehicleId === vehicleId) {
+        stopVehicleSelectionTimer();
         socket.emit('vehiculo:desbloquear', { vehicleId });
         selectedClientVehicleId = null;
 
@@ -820,6 +858,7 @@ window.toggleVehicleSelection = function(vehicleId) {
 
     // Si tenía otro vehículo bloqueado previamente, desbloquear el anterior
     if (selectedClientVehicleId && selectedClientVehicleId !== vehicleId) {
+        stopVehicleSelectionTimer();
         socket.emit('vehiculo:desbloquear', { vehicleId: selectedClientVehicleId });
     }
 
@@ -827,6 +866,7 @@ window.toggleVehicleSelection = function(vehicleId) {
     selectedClientVehicleId = vehicleId;
     const clienteId = clienteIdInput.value.trim() || 'cliente';
     socket.emit('vehiculo:bloquear', { vehicleId, clienteId });
+    startVehicleSelectionTimer(vehicleId);
 
     const hidden = document.getElementById('envioVehiculo');
     if (hidden) hidden.value = vehicleId;
@@ -841,14 +881,16 @@ window.toggleVehicleSelection = function(vehicleId) {
 
     if (originCoords) updateNearbyVehicles();
 
-    if (clientVehicleMarkers[vehicleId]) {
-        clientVehicleMarkers[vehicleId].openPopup();
+    // Cerrar cualquier popup para no mostrar el botón
+    if (clientMap) {
+        clientMap.closePopup();
     }
 };
 
 window.selectNearbyVehicle = window.toggleVehicleSelection;
 
 function resetClientMap() {
+    stopVehicleSelectionTimer();
     if (selectedClientVehicleId) {
         socket.emit('vehiculo:desbloquear', { vehicleId: selectedClientVehicleId });
         selectedClientVehicleId = null;
@@ -1095,9 +1137,15 @@ envioForm.addEventListener('submit', (e) => {
     const vehicleId = document.getElementById('envioVehiculo')?.value || selectedClientVehicleId || null;
 
     if (!vehicleId) {
-        alert('Por favor selecciona un vehículo disponible en el mapa o en la lista.');
+        const badge = document.getElementById('selectedVehicleBadge');
+        if (badge) {
+            badge.textContent = 'Selecciona un vehículo disponible';
+        }
         return;
     }
+
+    // El pedido ha sido confirmado: detener y limpiar el temporizador de 15 segundos
+    stopVehicleSelectionTimer();
 
     const oCoords = originCoords || { lat: -0.2295, lng: -78.5243 };
     const pCoords = destCoords || { lat: -0.1950, lng: -78.4850 };
@@ -1244,6 +1292,7 @@ socket.on('vehiculo:bloqueado', (data) => {
     lockedVehicles[data.vehicleId] = data;
     // Si otro cliente bloqueó el vehículo que yo tenía seleccionado
     if (selectedClientVehicleId === data.vehicleId && data.socketId !== socket.id) {
+        stopVehicleSelectionTimer();
         selectedClientVehicleId = null;
         const hidden = document.getElementById('envioVehiculo');
         if (hidden) hidden.value = '';
@@ -1260,13 +1309,8 @@ socket.on('vehiculo:bloqueado', (data) => {
 
 socket.on('vehiculo:desbloqueado', (data) => {
     delete lockedVehicles[data.vehicleId];
-    if (originCoords && clientMap) updateNearbyVehicles();
-    renderVehicleList();
-});
-
-socket.on('vehiculo:bloqueo_rechazado', (data) => {
-    alert(`⚠ ${data.message || 'El vehículo está bloqueado por otro cliente.'}`);
     if (selectedClientVehicleId === data.vehicleId) {
+        stopVehicleSelectionTimer();
         selectedClientVehicleId = null;
         const hidden = document.getElementById('envioVehiculo');
         if (hidden) hidden.value = '';
@@ -1278,6 +1322,39 @@ socket.on('vehiculo:bloqueo_rechazado', (data) => {
         }
     }
     if (originCoords && clientMap) updateNearbyVehicles();
+    renderVehicleList();
+});
+
+socket.on('vehiculo:bloqueo_rechazado', (data) => {
+    if (selectedClientVehicleId === data.vehicleId) {
+        stopVehicleSelectionTimer();
+        selectedClientVehicleId = null;
+        const hidden = document.getElementById('envioVehiculo');
+        if (hidden) hidden.value = '';
+        const badge = document.getElementById('selectedVehicleBadge');
+        if (badge) {
+            badge.style.backgroundColor = '';
+            badge.className = 'badge bg-secondary';
+            badge.textContent = 'Ninguno seleccionado';
+        }
+    }
+    if (originCoords && clientMap) updateNearbyVehicles();
+});
+
+socket.on('vehiculo:tiempo_agotado', (data) => {
+    stopVehicleSelectionTimer();
+    if (selectedClientVehicleId === data.vehicleId) {
+        selectedClientVehicleId = null;
+        const hidden = document.getElementById('envioVehiculo');
+        if (hidden) hidden.value = '';
+        const badge = document.getElementById('selectedVehicleBadge');
+        if (badge) {
+            badge.style.backgroundColor = '';
+            badge.className = 'badge bg-secondary';
+            badge.textContent = 'Ninguno seleccionado';
+        }
+        if (originCoords && clientMap) updateNearbyVehicles();
+    }
 });
 
 socket.on('telemetry', (v) => {

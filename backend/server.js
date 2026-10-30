@@ -43,6 +43,7 @@ const choferes = {
 const rutas = {};          // rutaId -> { id, nombre, origen, destino, vehicleId, choferId, estado }
 const envios = {};         // envioId -> { id, clienteId, descripcion, origen, destino, origenCoords, pedidoCoords, vehicleId, estado }
 const lockedVehicles = {}; // vehicleId -> { vehicleId, clienteId, socketId, lockedAt }
+const lockTimeouts = {};   // vehicleId -> timeoutId (temporizador de 15 segundos para confirmar pedido)
 const activeDynamicRoutes = {}; // vehicleId -> { vehicleId, envioId, waypoints, status }
 
 let nextClienteId = 2;
@@ -223,20 +224,47 @@ io.on('connection', (socket) => {
         // Si este socket tenía otro vehículo bloqueado previamente, liberarlo
         for (const [vId, lock] of Object.entries(lockedVehicles)) {
             if (lock.socketId === socket.id && vId !== vehicleId) {
+                if (lockTimeouts[vId]) {
+                    clearTimeout(lockTimeouts[vId]);
+                    delete lockTimeouts[vId];
+                }
                 delete lockedVehicles[vId];
                 io.emit('vehiculo:desbloqueado', { vehicleId: vId });
             }
         }
 
+        if (lockTimeouts[vehicleId]) {
+            clearTimeout(lockTimeouts[vehicleId]);
+            delete lockTimeouts[vehicleId];
+        }
+
+        const LOCK_TIMEOUT_MS = 15000; // 15 segundos para confirmar pedido
+
         lockedVehicles[vehicleId] = {
             vehicleId,
             clienteId: clienteId || 'cliente',
             socketId: socket.id,
-            lockedAt: Date.now()
+            lockedAt: Date.now(),
+            expiresIn: LOCK_TIMEOUT_MS
         };
 
+        // Temporizador de 15 segundos: si no se confirma el pedido, se deselecciona automáticamente
+        lockTimeouts[vehicleId] = setTimeout(() => {
+            if (lockedVehicles[vehicleId] && lockedVehicles[vehicleId].socketId === socket.id) {
+                console.log(`[Temporizador 15s] Vehículo ${vehicleId} deseleccionado por no confirmar pedido a tiempo.`);
+                delete lockedVehicles[vehicleId];
+                delete lockTimeouts[vehicleId];
+
+                io.emit('vehiculo:desbloqueado', { vehicleId });
+                socket.emit('vehiculo:tiempo_agotado', {
+                    vehicleId,
+                    message: `⏱️ Tiempo agotado (15 segundos): No confirmaste el pedido. El vehículo ${vehicleId} fue deseleccionado automáticamente.`
+                });
+            }
+        }, LOCK_TIMEOUT_MS);
+
         io.emit('vehiculo:bloqueado', lockedVehicles[vehicleId]);
-        console.log(`[Socket.io] Vehículo ${vehicleId} bloqueado por cliente ${clienteId} (${socket.id})`);
+        console.log(`[Socket.io] Vehículo ${vehicleId} bloqueado por cliente ${clienteId} (${socket.id}) - expira en 15s`);
     });
 
     socket.on('vehiculo:desbloquear', (data) => {
@@ -245,6 +273,10 @@ io.on('connection', (socket) => {
 
         const currentLock = lockedVehicles[vehicleId];
         if (currentLock && currentLock.socketId === socket.id) {
+            if (lockTimeouts[vehicleId]) {
+                clearTimeout(lockTimeouts[vehicleId]);
+                delete lockTimeouts[vehicleId];
+            }
             delete lockedVehicles[vehicleId];
             io.emit('vehiculo:desbloqueado', { vehicleId });
             console.log(`[Socket.io] Vehículo ${vehicleId} desbloqueado/desmarcado por ${socket.id}`);
@@ -306,10 +338,16 @@ io.on('connection', (socket) => {
             estado: 'pendiente'
         };
 
-        // Si el vehículo estaba bloqueado temporalmente por este cliente, liberarlo del mutex de UI
-        if (assignedVehicleId && lockedVehicles[assignedVehicleId]) {
-            delete lockedVehicles[assignedVehicleId];
-            io.emit('vehiculo:desbloqueado', { vehicleId: assignedVehicleId });
+        // Si el vehículo estaba bloqueado temporalmente por este cliente, liberarlo del mutex de UI y cancelar temporizador
+        if (assignedVehicleId) {
+            if (lockTimeouts[assignedVehicleId]) {
+                clearTimeout(lockTimeouts[assignedVehicleId]);
+                delete lockTimeouts[assignedVehicleId];
+            }
+            if (lockedVehicles[assignedVehicleId]) {
+                delete lockedVehicles[assignedVehicleId];
+                io.emit('vehiculo:desbloqueado', { vehicleId: assignedVehicleId });
+            }
         }
 
         io.emit('envio:creado', envios[id]);
@@ -358,6 +396,10 @@ io.on('connection', (socket) => {
         // Liberar cualquier vehículo que este cliente haya dejado bloqueado al desconectarse
         for (const [vehicleId, lock] of Object.entries(lockedVehicles)) {
             if (lock.socketId === socket.id) {
+                if (lockTimeouts[vehicleId]) {
+                    clearTimeout(lockTimeouts[vehicleId]);
+                    delete lockTimeouts[vehicleId];
+                }
                 delete lockedVehicles[vehicleId];
                 io.emit('vehiculo:desbloqueado', { vehicleId });
                 console.log(`[Socket.io] Vehículo ${vehicleId} liberado por desconexión`);

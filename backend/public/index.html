@@ -192,26 +192,26 @@
                                     <span class="badge bg-light text-primary border" id="clientCoordsLabel" style="font-size: 0.75rem;">Haz clic en el mapa</span>
                                 </div>
                                 <div id="clientMap" style="height: 240px; width: 100%; border-radius: 8px; border: 1px solid #ced4da;"></div>
-                                <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-1">
-                                    <div class="btn-group btn-group-sm" role="group">
+                                <div class="mt-2">
+                                    <div class="btn-group btn-group-sm w-100" role="group">
                                         <input type="radio" class="btn-check" name="mapTarget" id="targetDestino" value="destino" checked autocomplete="off">
                                         <label class="btn btn-outline-primary btn-sm py-1" for="targetDestino" style="font-size: 0.75rem;">📦 1. Dónde está el Pedido (Recogida)</label>
 
                                         <input type="radio" class="btn-check" name="mapTarget" id="targetOrigen" value="origen" autocomplete="off">
                                         <label class="btn btn-outline-success btn-sm py-1" for="targetOrigen" style="font-size: 0.75rem;">🟢 2. Al Origen / Entrega (Cliente)</label>
                                     </div>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary py-1" id="btnClientGps" style="font-size: 0.75rem;" title="Usar mi ubicación GPS actual">
-                                        🎯 Mi GPS
-                                    </button>
                                 </div>
                             </div>
 
                             <!-- Vehículos disponibles en la zona -->
                             <div class="col-12 my-2" id="nearbyVehiclesSection" style="display: none;">
                                 <div class="p-2 border rounded bg-light">
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-1">
                                         <span class="small fw-bold text-dark">🚗 Vehículos disponibles en la zona:</span>
-                                        <span class="badge bg-secondary" id="selectedVehicleBadge" style="font-size: 0.75rem;">Ninguno seleccionado</span>
+                                        <div class="d-flex align-items-center gap-1">
+                                            <span class="badge bg-secondary" id="selectedVehicleBadge" style="font-size: 0.75rem;">Ninguno seleccionado</span>
+                                            <span class="badge bg-light text-dark border d-none" id="selectionCountdownBadge" style="font-size: 0.75rem;">⏱️ 15s</span>
+                                        </div>
                                     </div>
                                     <div id="nearbyVehiclesList" class="d-flex flex-wrap gap-2"></div>
                                     <input type="hidden" id="envioVehiculo" value="">
