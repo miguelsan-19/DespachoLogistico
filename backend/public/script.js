@@ -131,7 +131,11 @@ function createVehicleIcon(vehicleId) {
 }
 
 function getStatusBadge(status) {
-    if (status === 'en_ruta') return '<span class="badge bg-success">en ruta</span>';
+    if (status === 'hacia_pedido') return '<span class="badge bg-primary">🚗 Hacia el pedido</span>';
+    if (status === 'recogiendo_pedido') return '<span class="badge bg-warning text-dark">📦 Recogiendo pedido</span>';
+    if (status === 'hacia_origen') return '<span class="badge bg-info text-dark">🚚 Hacia el origen</span>';
+    if (status === 'entregado') return '<span class="badge bg-success">✓ Entregado</span>';
+    if (status === 'en_ruta') return '<span class="badge bg-success">En ruta</span>';
     if (status === 'detenido' || status === 'estacionado') return `<span class="badge bg-secondary">${status}</span>`;
     return `<span class="badge bg-danger">${(status || '').replace(/_/g, ' ')}</span>`;
 }
@@ -384,8 +388,19 @@ function renderEnviosAdmin() {
             ? ` · <span class="badge text-white" style="background-color: ${getVehicleColor(e.vehicleId)};">${e.vehicleId}</span>`
             : '';
         const li = document.createElement('li');
-        li.className = 'list-group-item px-0';
-        li.innerHTML = `<b>${e.id}</b> · cliente ${e.clienteId} · ${e.origen} → ${e.destino}${vBadge} · <span class="badge bg-secondary">${e.estado}</span>`;
+        li.className = 'list-group-item px-0 d-flex justify-content-between align-items-center flex-wrap gap-1';
+        li.innerHTML = `
+            <div>
+                <b>${e.id}</b> · cliente ${e.clienteId} · ${e.descripcion || 'Paquete'}
+                <div class="text-muted small">${e.destino} ➔ ${e.origen}${vBadge}</div>
+            </div>
+            <div class="d-flex align-items-center gap-1">
+                ${getStatusBadge(e.estado)}
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.7rem;" onclick="seleccionarPedido('${e.id}')" title="Ver/Activar ruta en el mapa">
+                    🗺️
+                </button>
+            </div>
+        `;
         envioListAdminEl.appendChild(li);
     });
 
@@ -407,8 +422,15 @@ let originMarker = null;
 let destMarker = null;
 let originZoneCircle = null;
 let originCoords = null;
+let destCoords = null;
 const clientVehicleMarkers = {};
 let selectedClientVehicleId = null;
+
+// Rutas dinámicas
+const activeDynamicRoutes = {};
+const adminRouteLayers = {};
+const clientRouteLayers = {};
+let activeSelectedEnvioId = null;
 
 // Obtener chofer asignado a un vehículo
 function getDriverForVehicle(vehicleId) {
@@ -427,7 +449,7 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
     return Number((R * c).toFixed(1));
 }
 
-// Icono personalizado para el Origen (🟢 Verde)
+// Icono personalizado para el Origen / Entrega (🟢 Verde)
 const originPinIcon = L.divIcon({
     className: 'custom-map-pin',
     html: `
@@ -435,7 +457,7 @@ const originPinIcon = L.divIcon({
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 46" width="36" height="46">
                 <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 28 18 28s18-14.5 18-28c0-9.94-8.06-18-18-18z" fill="#198754" stroke="#ffffff" stroke-width="2"/>
                 <circle cx="18" cy="17" r="10" fill="#ffffff"/>
-                <text x="18" y="17" font-size="11" font-weight="800" fill="#198754" text-anchor="middle" dominant-baseline="central">A</text>
+                <text x="18" y="17" font-size="11" font-weight="800" fill="#198754" text-anchor="middle" dominant-baseline="central">🏠</text>
             </svg>
         </div>
     `,
@@ -444,15 +466,15 @@ const originPinIcon = L.divIcon({
     popupAnchor: [0, -44]
 });
 
-// Icono personalizado para el Destino (🔴 Rojo)
-const destPinIcon = L.divIcon({
+// Icono personalizado para Dónde está el Pedido (📦 Azul)
+const pedidoPinIcon = L.divIcon({
     className: 'custom-map-pin',
     html: `
         <div style="filter: drop-shadow(0 3px 5px rgba(0,0,0,0.4));">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 46" width="36" height="46">
-                <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 28 18 28s18-14.5 18-28c0-9.94-8.06-18-18-18z" fill="#dc3545" stroke="#ffffff" stroke-width="2"/>
+                <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 28 18 28s18-14.5 18-28c0-9.94-8.06-18-18-18z" fill="#0d6efd" stroke="#ffffff" stroke-width="2"/>
                 <circle cx="18" cy="17" r="10" fill="#ffffff"/>
-                <text x="18" y="17" font-size="11" font-weight="800" fill="#dc3545" text-anchor="middle" dominant-baseline="central">B</text>
+                <text x="18" y="17" font-size="11" font-weight="800" fill="#0d6efd" text-anchor="middle" dominant-baseline="central">📦</text>
             </svg>
         </div>
     `,
@@ -460,6 +482,8 @@ const destPinIcon = L.divIcon({
     iconAnchor: [18, 46],
     popupAnchor: [0, -44]
 });
+
+const destPinIcon = pedidoPinIcon;
 
 function initClientMap() {
     if (clientMap) {
@@ -532,9 +556,34 @@ async function updateAddressFromCoords(lat, lng, targetInputId) {
 }
 
 function handleClientMapClick(lat, lng) {
-    const targetType = document.querySelector('input[name="mapTarget"]:checked')?.value || 'origen';
+    const targetType = document.querySelector('input[name="mapTarget"]:checked')?.value || 'destino';
 
-    if (targetType === 'origen') {
+    if (targetType === 'destino') {
+        // 1. Dónde está el pedido (Punto de recogida)
+        destCoords = { lat, lng };
+
+        if (!destMarker) {
+            destMarker = L.marker([lat, lng], { icon: pedidoPinIcon, draggable: true }).addTo(clientMap);
+            destMarker.on('dragend', (ev) => {
+                const pos = ev.target.getLatLng();
+                destCoords = { lat: pos.lat, lng: pos.lng };
+                updateAddressFromCoords(pos.lat, pos.lng, 'envioDestino');
+                updateNearbyVehicles();
+            });
+        } else {
+            destMarker.setLatLng([lat, lng]);
+        }
+        destMarker.bindPopup('<b>📦 Dónde está el Pedido (Recogida)</b><br>Haz clic en "Al Origen" para fijar la entrega.').openPopup();
+
+        if (clientCoordsLabel) {
+            clientCoordsLabel.textContent = `Pedido: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        }
+
+        updateAddressFromCoords(lat, lng, 'envioDestino');
+        updateNearbyVehicles();
+
+    } else {
+        // 2. Al Origen / Entrega (Cliente)
         originCoords = { lat, lng };
 
         if (!originMarker) {
@@ -549,7 +598,7 @@ function handleClientMapClick(lat, lng) {
         } else {
             originMarker.setLatLng([lat, lng]);
         }
-        originMarker.bindPopup('<b>🟢 Origen (Punto de recogida)</b><br>Buscando vehículos cercanos...').openPopup();
+        originMarker.bindPopup('<b>🟢 Al Origen / Entrega (Cliente)</b><br>Punto de destino del paquete').openPopup();
 
         // Círculo de cobertura/zona alrededor del origen (~12 km)
         if (!originZoneCircle) {
@@ -571,34 +620,16 @@ function handleClientMapClick(lat, lng) {
 
         updateAddressFromCoords(lat, lng, 'envioOrigen');
         updateNearbyVehicles();
-
-    } else {
-        // Destino
-        if (!destMarker) {
-            destMarker = L.marker([lat, lng], { icon: destPinIcon, draggable: true }).addTo(clientMap);
-            destMarker.on('dragend', (ev) => {
-                const pos = ev.target.getLatLng();
-                updateAddressFromCoords(pos.lat, pos.lng, 'envioDestino');
-            });
-        } else {
-            destMarker.setLatLng([lat, lng]);
-        }
-        destMarker.bindPopup('<b>🔴 Destino (Punto de entrega)</b>').openPopup();
-
-        if (clientCoordsLabel) {
-            clientCoordsLabel.textContent = `Destino: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-        }
-
-        updateAddressFromCoords(lat, lng, 'envioDestino');
     }
 }
 
 // Actualizar vehículos cercanos y mostrarlos en el mini mapa
 function updateNearbyVehicles() {
-    if (!originCoords || !clientMap) return;
+    if (!clientMap) return;
+    const refPoint = originCoords || destCoords || { lat: -0.2295, lng: -78.5243 };
 
     const vehicleList = Object.values(vehicles).map((v) => {
-        const dist = calculateDistanceKm(originCoords.lat, originCoords.lng, v.lat, v.lng);
+        const dist = calculateDistanceKm(refPoint.lat, refPoint.lng, v.lat, v.lng);
         return { ...v, distance: dist };
     });
 
@@ -833,6 +864,7 @@ function resetClientMap() {
     for (const key in clientVehicleMarkers) delete clientVehicleMarkers[key];
 
     originCoords = null;
+    destCoords = null;
 
     const hidden = document.getElementById('envioVehiculo');
     if (hidden) hidden.value = '';
@@ -851,44 +883,235 @@ function resetClientMap() {
         clientCoordsLabel.textContent = 'Haz clic en el mapa';
     }
 
-    // Regresar radio a origen
-    const radioOrigen = document.getElementById('targetOrigen');
-    if (radioOrigen) radioOrigen.checked = true;
+    // Regresar radio a destino (Dónde está el pedido)
+    const radioDestino = document.getElementById('targetDestino');
+    if (radioDestino) radioDestino.checked = true;
 }
 
+// Pintar la ruta dinámica en cualquiera de los mapas Leaflet (Admin o Cliente)
+function renderDynamicRouteOnMap(routeData, targetMap, layerMap) {
+    if (!targetMap || !routeData) return;
+    const { vehicleId, waypoints, status, envioId } = routeData;
+    if (!waypoints || waypoints.length < 2) return;
+
+    const color = getVehicleColor(vehicleId);
+
+    // Limpiar capa previa de este vehículo en este mapa
+    if (layerMap[vehicleId]) {
+        targetMap.removeLayer(layerMap[vehicleId]);
+    }
+
+    const group = L.layerGroup();
+
+    // 1. Línea polilínea dinámica conectando: Auto -> Pedido -> Origen
+    const latlngs = waypoints.map(w => [w.lat, w.lng]);
+    const routePolyline = L.polyline(latlngs, {
+        color: color,
+        weight: 4,
+        opacity: 0.85,
+        dashArray: '8, 8'
+    }).addTo(group);
+
+    // 2. Marcador para "Dónde está el pedido" (waypoints[1])
+    if (waypoints[1]) {
+        L.marker([waypoints[1].lat, waypoints[1].lng], {
+            icon: pedidoPinIcon
+        }).bindPopup(`
+            <div style="font-size:0.85rem;">
+                <div class="fw-bold text-primary">📦 Dónde está el Pedido (Recogida)</div>
+                <div class="small text-muted">Envío: ${envioId || ''} · Asignado a: ${vehicleId}</div>
+                <div class="mt-1">Lat: ${waypoints[1].lat.toFixed(4)}, Lng: ${waypoints[1].lng.toFixed(4)}</div>
+            </div>
+        `).addTo(group);
+    }
+
+    // 3. Marcador para "Al Origen / Entrega" (waypoints[2])
+    if (waypoints[2]) {
+        L.marker([waypoints[2].lat, waypoints[2].lng], {
+            icon: originPinIcon
+        }).bindPopup(`
+            <div style="font-size:0.85rem;">
+                <div class="fw-bold text-success">🟢 Al Origen / Entrega (Cliente)</div>
+                <div class="small text-muted">Envío: ${envioId || ''} · Asignado a: ${vehicleId}</div>
+                <div class="mt-1">Lat: ${waypoints[2].lat.toFixed(4)}, Lng: ${waypoints[2].lng.toFixed(4)}</div>
+            </div>
+        `).addTo(group);
+    }
+
+    group.addTo(targetMap);
+    layerMap[vehicleId] = group;
+}
+
+// Actualizar banner de estado de la ruta dinámica en el portal cliente
+function updateDynamicRouteStatusBox(routeData) {
+    const box = document.getElementById('dynamicRouteStatusBox');
+    if (!box) return;
+
+    if (!routeData) {
+        box.classList.add('d-none');
+        return;
+    }
+
+    box.classList.remove('d-none');
+
+    const titleEl = document.getElementById('dynRouteVehicleTitle');
+    const badgeEl = document.getElementById('dynRouteStatusBadge');
+    const descEl = document.getElementById('dynRouteStepDesc');
+    const progEl = document.getElementById('dynRouteProgressBar');
+
+    const vId = routeData.vehicleId;
+    const status = routeData.status;
+    const color = getVehicleColor(vId);
+
+    if (titleEl) {
+        titleEl.innerHTML = `<span class="vehicle-color-dot" style="background-color:${color}; width:10px; height:10px;"></span> 🚗 Vehículo ${vId} (Envío ${routeData.envioId || ''})`;
+    }
+
+    let badgeText = 'En camino';
+    let badgeClass = 'bg-primary';
+    let descText = 'El vehículo se desplaza en su ruta dinámica.';
+    let pct = 30;
+
+    if (status === 'hacia_pedido') {
+        badgeText = '🚗 1/2 Hacia el pedido';
+        badgeClass = 'bg-primary';
+        descText = 'El vehículo está en camino a recoger el pedido en el punto indicado.';
+        pct = 35;
+    } else if (status === 'recogiendo_pedido') {
+        badgeText = '📦 Recogiendo paquete';
+        badgeClass = 'bg-warning text-dark';
+        descText = 'El vehículo llegó al sitio del pedido y está cargando el paquete.';
+        pct = 50;
+    } else if (status === 'hacia_origen') {
+        badgeText = '🚚 2/2 Hacia el origen';
+        badgeClass = 'bg-info text-dark';
+        descText = 'Paquete a bordo. El vehículo se dirige a entregarlo al origen del cliente.';
+        pct = 80;
+    } else if (status === 'entregado') {
+        badgeText = '✓ Entregado en origen';
+        badgeClass = 'bg-success';
+        descText = '¡Ruta completada! El pedido ha llegado a su destino en el origen.';
+        pct = 100;
+    }
+
+    if (badgeEl) {
+        badgeEl.className = `badge ${badgeClass}`;
+        badgeEl.textContent = badgeText;
+    }
+    if (descEl) {
+        descEl.textContent = descText;
+    }
+    if (progEl) {
+        progEl.style.width = `${pct}%`;
+        if (pct === 100) {
+            progEl.className = 'progress-bar bg-success';
+        } else {
+            progEl.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+        }
+    }
+}
+
+// Seleccionar un pedido (desde "Mis envíos" o al crearlo)
+window.seleccionarPedido = function(envioId) {
+    if (!envioId || !envios[envioId]) return;
+    activeSelectedEnvioId = envioId;
+    const envio = envios[envioId];
+
+    socket.emit('envio:seleccionar', { envioId });
+
+    if (envio.vehicleId && activeDynamicRoutes[envio.vehicleId]) {
+        const rData = activeDynamicRoutes[envio.vehicleId];
+        updateDynamicRouteStatusBox(rData);
+
+        if (clientMap) {
+            renderDynamicRouteOnMap(rData, clientMap, clientRouteLayers);
+            if (rData.waypoints && rData.waypoints.length > 0) {
+                const bounds = L.latLngBounds(rData.waypoints.map(w => [w.lat, w.lng]));
+                clientMap.fitBounds(bounds, { padding: [25, 25] });
+            }
+        }
+        if (map) {
+            renderDynamicRouteOnMap(rData, map, adminRouteLayers);
+            if (rData.waypoints && rData.waypoints.length > 0) {
+                const bounds = L.latLngBounds(rData.waypoints.map(w => [w.lat, w.lng]));
+                map.fitBounds(bounds, { padding: [40, 40] });
+            }
+        }
+    }
+
+    renderEnviosCliente();
+    renderEnviosAdmin();
+};
+
 function renderEnviosCliente() {
-    const myId = clienteIdInput.value.trim();
+    const myId = clienteIdInput.value.trim() || 'C1';
     envioListClienteEl.innerHTML = '';
-    Object.values(envios)
-        .filter((e) => e.clienteId === myId)
-        .forEach((e) => {
-            const vBadge = e.vehicleId
-                ? ` · <span class="badge text-white" style="background-color: ${getVehicleColor(e.vehicleId)};">${e.vehicleId}</span>`
-                : '';
-            const li = document.createElement('li');
-            li.className = 'list-group-item';
-            li.innerHTML = `${e.descripcion} · ${e.origen} → ${e.destino}${vBadge} · <span class="badge bg-secondary">${e.estado}</span>`;
-            envioListClienteEl.appendChild(li);
+    const myEnvios = Object.values(envios).filter((e) => e.clienteId === myId || !e.clienteId);
+
+    if (myEnvios.length === 0) {
+        envioListClienteEl.innerHTML = '<li class="list-group-item text-muted small text-center py-3">No tienes pedidos creados aún. Llena el formulario arriba y haz clic en "Crear envío".</li>';
+        return;
+    }
+
+    myEnvios.forEach((e) => {
+        const isSelected = activeSelectedEnvioId === e.id;
+        const color = e.vehicleId ? getVehicleColor(e.vehicleId) : '#6c757d';
+        const vBadge = e.vehicleId
+            ? `<span class="badge text-white" style="background-color: ${color};"><span class="vehicle-color-dot" style="width:7px;height:7px;background:#fff;margin-right:3px;"></span>${e.vehicleId}</span>`
+            : '<span class="badge bg-secondary">Sin vehículo</span>';
+
+        const card = document.createElement('div');
+        card.className = `client-order-item ${isSelected ? 'active' : ''}`;
+        card.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="fw-bold text-dark" style="font-size:0.95rem;">📦 ${e.descripcion}</span>
+                ${getStatusBadge(e.estado)}
+            </div>
+            <div class="small text-muted" style="font-size:0.78rem; line-height: 1.4;">
+                <div><b>Dónde está el pedido (recogida):</b> ${e.destino}</div>
+                <div><b>Al origen (entrega):</b> ${e.origen}</div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2 pt-1 border-top">
+                <span class="small">${vBadge} <span class="text-muted ms-1">(${e.id})</span></span>
+                <button type="button" class="btn btn-sm ${isSelected ? 'btn-primary' : 'btn-outline-primary'} py-0" style="font-size:0.75rem;">
+                    ${isSelected ? '✓ Rastreando' : '🎯 Seleccionar pedido'}
+                </button>
+            </div>
+        `;
+
+        card.addEventListener('click', () => {
+            seleccionarPedido(e.id);
         });
+
+        envioListClienteEl.appendChild(card);
+    });
 }
 
 clienteIdInput.addEventListener('input', renderEnviosCliente);
 
 envioForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    const clienteId = clienteIdInput.value.trim();
-    if (!clienteId) {
-        alert('Primero escribe tu ID de cliente (te lo da el administrador).');
+    const clienteId = clienteIdInput.value.trim() || 'C1';
+    const vehicleId = document.getElementById('envioVehiculo')?.value || selectedClientVehicleId || null;
+
+    if (!vehicleId) {
+        alert('Por favor selecciona un vehículo disponible en el mapa o en la lista.');
         return;
     }
-    const vehicleId = document.getElementById('envioVehiculo')?.value || selectedClientVehicleId || null;
+
+    const oCoords = originCoords || { lat: -0.2295, lng: -78.5243 };
+    const pCoords = destCoords || { lat: -0.1950, lng: -78.4850 };
+
     socket.emit('envio:crear', {
         clienteId,
         descripcion: document.getElementById('envioDescripcion').value.trim(),
-        origen: document.getElementById('envioOrigen').value.trim(),
-        destino: document.getElementById('envioDestino').value.trim(),
+        origen: document.getElementById('envioOrigen').value.trim() || 'Quito Centro (Origen)',
+        destino: document.getElementById('envioDestino').value.trim() || 'Norte de Quito (Pedido)',
+        origenCoords: oCoords,
+        pedidoCoords: pCoords,
         vehicleId
     });
+
     envioForm.reset();
     resetClientMap();
 });
@@ -996,9 +1219,17 @@ socket.on('init', (data) => {
     Object.assign(rutas, data.rutas || {});
     Object.assign(envios, data.envios || {});
     Object.assign(lockedVehicles, data.lockedVehicles || {});
+    Object.assign(activeDynamicRoutes, data.activeDynamicRoutes || {});
     incidentCount = (data.incidents || []).length;
 
     Object.values(vehicles).forEach(upsertMarker);
+
+    // Pintar rutas dinámicas activas si existen
+    Object.values(activeDynamicRoutes).forEach((rData) => {
+        if (map) renderDynamicRouteOnMap(rData, map, adminRouteLayers);
+        if (clientMap) renderDynamicRouteOnMap(rData, clientMap, clientRouteLayers);
+    });
+
     renderVehicleList();
     renderMetrics();
     renderClientes();
@@ -1055,8 +1286,44 @@ socket.on('telemetry', (v) => {
     renderVehicleList();
     renderMetrics();
     renderChoferInfo();
+
+    // Actualizar estado de ruta dinámica si este vehículo tiene una
+    if (activeDynamicRoutes[v.vehicleId]) {
+        activeDynamicRoutes[v.vehicleId].status = v.status;
+        if (activeSelectedEnvioId === activeDynamicRoutes[v.vehicleId].envioId) {
+            updateDynamicRouteStatusBox(activeDynamicRoutes[v.vehicleId]);
+        }
+    }
+
     if (originCoords && clientMap) {
         updateNearbyVehicles();
+    }
+});
+
+socket.on('ruta:dinamica', (routeData) => {
+    activeDynamicRoutes[routeData.vehicleId] = routeData;
+    if (routeData.envioId) {
+        activeSelectedEnvioId = routeData.envioId;
+    }
+
+    if (map) renderDynamicRouteOnMap(routeData, map, adminRouteLayers);
+    if (clientMap) renderDynamicRouteOnMap(routeData, clientMap, clientRouteLayers);
+
+    updateDynamicRouteStatusBox(routeData);
+    renderEnviosCliente();
+    renderEnviosAdmin();
+});
+
+socket.on('envio:actualizado', (e) => {
+    envios[e.id] = e;
+    renderEnviosAdmin();
+    renderEnviosCliente();
+
+    if (e.vehicleId && activeDynamicRoutes[e.vehicleId]) {
+        activeDynamicRoutes[e.vehicleId].status = e.estado;
+        if (activeSelectedEnvioId === e.id) {
+            updateDynamicRouteStatusBox(activeDynamicRoutes[e.vehicleId]);
+        }
     }
 });
 
@@ -1076,4 +1343,9 @@ socket.on('chofer:creado', (ch) => {
     if (originCoords && clientMap) updateNearbyVehicles();
 });
 socket.on('ruta:creada', (r) => { rutas[r.id] = r; renderRutas(); renderChoferInfo(); });
-socket.on('envio:creado', (e) => { envios[e.id] = e; renderEnviosAdmin(); renderEnviosCliente(); });
+socket.on('envio:creado', (e) => {
+    envios[e.id] = e;
+    activeSelectedEnvioId = e.id;
+    renderEnviosAdmin();
+    renderEnviosCliente();
+});

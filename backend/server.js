@@ -1,14 +1,16 @@
-// Servidor del Centro de Despacho Logistico - Fase 1 (Primer Parcial)
+// Servidor del Centro de Despacho Logístico - Fase 1 (Primer Parcial)
 // Combina: WebSockets (Socket.io) para el dashboard en vivo + socket UDP
-// crudo para recibir la telemetria del simulador de flota.
+// crudo para recibir la telemetría del simulador de flota y enviar comandos de ruta dinámica.
 //
-// Flujo: simulator (UDP) -> gateway UDP de este servidor -> Socket.io -> frontend
+// Flujo:
+// 1. Telemetría: Simulador (UDP -> 41234) -> Gateway UDP -> Socket.io -> Dashboard Web
+// 2. Control Dinámico: Dashboard Web -> Socket.io -> Servidor (UDP -> 41235) -> Simulador
 
 const express = require('express');
 const http = require('http');
 const path = require('path');
 const socketIO = require('socket.io');
-const dgram = require('dgram'); // modulo nativo de Node para sockets UDP
+const dgram = require('dgram'); // Módulo nativo de Node.js para sockets UDP
 
 const app = express();
 const server = http.createServer(app);
@@ -17,37 +19,44 @@ const io = socketIO(server);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------------------------------------------------------------------
-// Estado en memoria de los vehiculos (para el primer parcial no hace
-// falta base de datos: basta con tener el estado actual compartido y
-// que se sincronice en tiempo real entre todos los clientes conectados)
+// Estado en memoria de los vehículos y módulos
 // ---------------------------------------------------------------------
-const vehicles = {}; // vehicleId -> { lat, lng, speed, status, lastUpdate }
-const incidents = []; // lista simple de incidencias reportadas
+const vehicles = {
+    V001: { vehicleId: 'V001', lat: -0.2295, lng: -78.5243, speed: 0, status: 'detenido', lastUpdate: Date.now() },
+    V002: { vehicleId: 'V002', lat: -0.1807, lng: -78.4678, speed: 0, status: 'detenido', lastUpdate: Date.now() },
+    V003: { vehicleId: 'V003', lat: -0.3000, lng: -78.4600, speed: 0, status: 'detenido', lastUpdate: Date.now() },
+};
 
-// ---------------------------------------------------------------------
-// Modulos por rol: Administrador / Cliente / Chofer
-// Todo en memoria (igual que vehicles/incidents) para esta fase. No hay
-// login real: el frontend deja elegir un rol y, para Cliente/Chofer, se
-// identifica con su id (sin password) solo para filtrar su propia vista.
-// ---------------------------------------------------------------------
-const clientes = {};  // clienteId -> { id, nombre, telefono }
-const choferes = {};  // choferId -> { id, nombre, cedula, vehicleId }
-const rutas = {};     // rutaId -> { id, nombre, origen, destino, vehicleId, choferId, estado }
-const envios = {};    // envioId -> { id, clienteId, descripcion, origen, destino, vehicleId, estado }
+const incidents = []; // Lista de incidencias reportadas
+
+// Datos iniciales para que el sistema esté listo para evaluar sin configuración manual previa:
+const clientes = {
+    'C1': { id: 'C1', nombre: 'Juan Pérez (Cliente)', telefono: '0991234567' }
+};
+
+const choferes = {
+    'CH1': { id: 'CH1', nombre: 'Carlos Mendoza', cedula: '1712345678', vehicleId: 'V001' },
+    'CH2': { id: 'CH2', nombre: 'María López', cedula: '1723456789', vehicleId: 'V002' },
+    'CH3': { id: 'CH3', nombre: 'Pedro Gómez', cedula: '1734567890', vehicleId: 'V003' }
+};
+
+const rutas = {};          // rutaId -> { id, nombre, origen, destino, vehicleId, choferId, estado }
+const envios = {};         // envioId -> { id, clienteId, descripcion, origen, destino, origenCoords, pedidoCoords, vehicleId, estado }
 const lockedVehicles = {}; // vehicleId -> { vehicleId, clienteId, socketId, lockedAt }
+const activeDynamicRoutes = {}; // vehicleId -> { vehicleId, envioId, waypoints, status }
 
-let nextClienteId = 1;
-let nextChoferId = 1;
+let nextClienteId = 2;
+let nextChoferId = 4;
 let nextRutaId = 1;
 let nextEnvioId = 1;
 
 // ---------------------------------------------------------------------
-// GATEWAY UDP: aqui se cubre el requisito de "sockets" (Lab1) del silabo.
-// El simulador de flota NO manda sus coordenadas directo por Socket.io;
-// las manda por un datagrama UDP crudo a este puerto. Este gateway las
-// recibe, valida y recien ahi las reemite por WebSockets al dashboard.
+// GATEWAY UDP (Lab 1: Sockets Datagrama crudos)
 // ---------------------------------------------------------------------
-const UDP_PORT = 41234;
+const UDP_PORT = 41234;             // Puerto donde este backend escucha telemetría
+const SIMULATOR_UDP_PORT = 41235;    // Puerto donde el simulador escucha comandos
+const SIMULATOR_HOST = process.env.SIMULATOR_HOST || 'localhost';
+
 const udpServer = dgram.createSocket('udp4');
 
 udpServer.on('message', (msg, rinfo) => {
@@ -55,14 +64,13 @@ udpServer.on('message', (msg, rinfo) => {
     try {
         payload = JSON.parse(msg.toString());
     } catch (err) {
-        console.warn(`[UDP] Paquete invalido de ${rinfo.address}:${rinfo.port} - no es JSON`);
+        console.warn(`[UDP] Paquete inválido de ${rinfo.address}:${rinfo.port} - no es JSON`);
         return;
     }
 
-    // Validacion minima de esquema antes de aceptar el dato
-    const { vehicleId, lat, lng, speed, timestamp, status } = payload;
+    const { vehicleId, lat, lng, speed, timestamp, status, envioId } = payload;
     if (!vehicleId || typeof lat !== 'number' || typeof lng !== 'number') {
-        console.warn('[UDP] Payload de telemetria incompleto, se descarta:', payload);
+        console.warn('[UDP] Payload de telemetría incompleto, se descarta:', payload);
         return;
     }
 
@@ -71,20 +79,33 @@ udpServer.on('message', (msg, rinfo) => {
         lat,
         lng,
         speed: speed || 0,
-        status: status || 'en_ruta',
+        status: status || 'detenido',
+        envioId: envioId || null,
         lastUpdate: timestamp || Date.now()
     };
+
+    // Sincronizar estado en tiempo real del pedido asignado
+    if (envioId && envios[envioId]) {
+        if (envios[envioId].estado !== status) {
+            envios[envioId].estado = status;
+            io.emit('envio:actualizado', envios[envioId]);
+            console.log(`[Estado Pedido] ${envioId} actualizado a: ${status}`);
+        }
+    }
+
+    if (activeDynamicRoutes[vehicleId]) {
+        activeDynamicRoutes[vehicleId].status = status;
+    }
 
     // Reemitir por WebSockets a todos los dashboards conectados
     io.emit('telemetry', vehicles[vehicleId]);
 
-    // Deteccion simple de anomalia (parada no programada) para mostrar
-    // algo de logica de negocio ademas de solo retransmitir datos
+    // Detección de anomalías
     if (status === 'parada_no_programada' || status === 'desconexion') {
         io.emit('alert', {
             vehicleId,
             type: status,
-            message: `Vehiculo ${vehicleId}: ${status.replace(/_/g, ' ')}`,
+            message: `Vehículo ${vehicleId}: ${status.replace(/_/g, ' ')}`,
             timestamp: Date.now()
         });
     }
@@ -95,17 +116,83 @@ udpServer.on('error', (err) => {
 });
 
 udpServer.bind(UDP_PORT, () => {
-    console.log(`Gateway UDP escuchando telemetria en el puerto ${UDP_PORT}`);
+    console.log(`Gateway UDP escuchando telemetría en el puerto ${UDP_PORT}`);
 });
 
 // ---------------------------------------------------------------------
-// WEBSOCKETS (Socket.io): lo que ven los despachadores en el dashboard
+// DESPACHO COORDINADOR DISTRIBUIDO: Iniciar Ruta Dinámica
+// Envía un datagrama UDP crudo al simulador de flota (puerto 41235)
+// ---------------------------------------------------------------------
+function iniciarRutaDinamica(envioId, vehicleId) {
+    const envio = envios[envioId];
+    if (!envio) return;
+    const vId = vehicleId || envio.vehicleId;
+    if (!vId) return;
+
+    // 1. Posición inicial del auto (donde está detenido actualmente)
+    const currentPos = vehicles[vId] || { lat: -0.2295, lng: -78.5243 };
+
+    // 2. Dónde está el pedido (punto de recogida seleccionado por el cliente)
+    const pedidoCoords = envio.pedidoCoords || { lat: -0.1950, lng: -78.4850 };
+
+    // 3. Al origen (punto de entrega / retorno al origen del cliente)
+    const origenCoords = envio.origenCoords || { lat: currentPos.lat, lng: currentPos.lng };
+
+    const waypoints = [
+        { lat: Number(currentPos.lat), lng: Number(currentPos.lng), label: 'vehiculo' },
+        { lat: Number(pedidoCoords.lat), lng: Number(pedidoCoords.lng), label: 'pedido' },
+        { lat: Number(origenCoords.lat), lng: Number(origenCoords.lng), label: 'origen' }
+    ];
+
+    activeDynamicRoutes[vId] = {
+        vehicleId: vId,
+        envioId,
+        waypoints,
+        status: 'hacia_pedido'
+    };
+
+    envio.estado = 'hacia_pedido';
+    envio.vehicleId = vId;
+
+    // Enviar datagrama UDP al simulador de flota
+    const udpPayload = {
+        type: 'assign_route',
+        vehicleId: vId,
+        envioId,
+        waypoints
+    };
+
+    const messageBuffer = Buffer.from(JSON.stringify(udpPayload));
+    udpServer.send(messageBuffer, SIMULATOR_UDP_PORT, SIMULATOR_HOST, (err) => {
+        if (err) {
+            console.error(`[UDP out -> Simulador] Error al enviar comando de ruta para ${vId}:`, err);
+        } else {
+            console.log(`[UDP out -> Simulador] 🚀 Comando de ruta dinámica enviado para ${vId} (Envío ${envioId}) a ${SIMULATOR_HOST}:${SIMULATOR_UDP_PORT}`);
+        }
+    });
+
+    // Notificar a todos los dashboards vía WebSockets
+    io.emit('ruta:dinamica', activeDynamicRoutes[vId]);
+    io.emit('envio:actualizado', envio);
+}
+
+// ---------------------------------------------------------------------
+// WEBSOCKETS (Socket.io): Gestión de clientes, choferes y eventos
 // ---------------------------------------------------------------------
 io.on('connection', (socket) => {
     console.log(`[Socket.io] Cliente conectado: ${socket.id}`);
 
     // Estado inicial: snapshot de todo lo que existe hasta ahora
-    socket.emit('init', { vehicles, incidents, clientes, choferes, rutas, envios, lockedVehicles });
+    socket.emit('init', {
+        vehicles,
+        incidents,
+        clientes,
+        choferes,
+        rutas,
+        envios,
+        lockedVehicles,
+        activeDynamicRoutes
+    });
 
     // ---------------- Bloqueo / Reserva de Vehículo (Exclusión Mutua) ----------------
     socket.on('vehiculo:bloquear', (data) => {
@@ -165,7 +252,6 @@ io.on('connection', (socket) => {
     });
 
     // ---------------- Rol Administrador ----------------
-    // Alta de clientes, choferes y rutas; asignacion de chofer+vehiculo a ruta
     socket.on('cliente:crear', (data) => {
         const id = `C${nextClienteId++}`;
         clientes[id] = { id, nombre: data.nombre || 'Sin nombre', telefono: data.telefono || '' };
@@ -197,15 +283,13 @@ io.on('connection', (socket) => {
         io.emit('ruta:creada', rutas[id]);
     });
 
-    // ---------------- Rol Cliente ----------------
-    // Crear un envio y consultar sus propios envios (filtrado en el frontend
-    // por clienteId, ya que no hay login real en esta fase)
+    // ---------------- Rol Cliente & Rutas Dinámicas ----------------
     socket.on('envio:crear', (data) => {
         let assignedVehicleId = data.vehicleId || null;
         if (assignedVehicleId) {
             const hasDriver = Object.values(choferes).some((ch) => ch.vehicleId === assignedVehicleId);
             if (!hasDriver) {
-                assignedVehicleId = null; // No permitir guardar envio con vehiculo sin chofer
+                assignedVehicleId = null; // No permitir vehículo sin chofer
             }
         }
 
@@ -216,21 +300,47 @@ io.on('connection', (socket) => {
             descripcion: data.descripcion || '',
             origen: data.origen || '',
             destino: data.destino || '',
+            origenCoords: data.origenCoords || { lat: -0.2295, lng: -78.5243 },
+            pedidoCoords: data.pedidoCoords || { lat: -0.1950, lng: -78.4850 },
             vehicleId: assignedVehicleId,
             estado: 'pendiente'
         };
 
-        // Si el vehículo estaba bloqueado temporalmente por este cliente, liberarlo
+        // Si el vehículo estaba bloqueado temporalmente por este cliente, liberarlo del mutex de UI
         if (assignedVehicleId && lockedVehicles[assignedVehicleId]) {
             delete lockedVehicles[assignedVehicleId];
             io.emit('vehiculo:desbloqueado', { vehicleId: assignedVehicleId });
         }
 
         io.emit('envio:creado', envios[id]);
+
+        // Si tiene vehículo asignado, iniciar automáticamente la ruta dinámica
+        if (assignedVehicleId) {
+            iniciarRutaDinamica(id, assignedVehicleId);
+        }
+    });
+
+    // Cuando un cliente o administrador selecciona un pedido para activar/rastrear su ruta dinámica
+    socket.on('envio:seleccionar', (data) => {
+        const { envioId } = data || {};
+        if (!envioId || !envios[envioId]) return;
+
+        const envio = envios[envioId];
+        console.log(`[Socket.io] Pedido ${envioId} seleccionado por ${socket.id}`);
+
+        if (envio.vehicleId) {
+            iniciarRutaDinamica(envioId, envio.vehicleId);
+        } else {
+            // Si el pedido no tenía vehículo, asignar el primer vehículo libre con chofer
+            const freeVehicle = Object.values(choferes).map(c => c.vehicleId).find(v => v && (!activeDynamicRoutes[v] || activeDynamicRoutes[v].status === 'entregado'));
+            if (freeVehicle) {
+                envio.vehicleId = freeVehicle;
+                iniciarRutaDinamica(envioId, freeVehicle);
+            }
+        }
     });
 
     // ---------------- Rol Chofer ----------------
-    // Reporta una incidencia asociada a su ruta/vehiculo
     socket.on('reportIncident', (data) => {
         const incident = {
             id: incidents.length + 1,
@@ -259,4 +369,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Servidor escuchando en http://localhost:${PORT}`);
+    console.log(`Gateway UDP en puerto ${UDP_PORT} | Coordinando con simulador en puerto ${SIMULATOR_UDP_PORT}`);
 });

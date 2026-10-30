@@ -176,41 +176,41 @@
                     <div class="card-body">
                         <h4 class="card-title mb-3">📦 Portal del Cliente</h4>
                         <label class="form-label">Tu ID de cliente <small class="text-muted">(te lo da el administrador al registrarte)</small></label>
-                        <input type="text" class="form-control mb-3" id="clienteIdInput" placeholder="Ej. C1">
+                        <input type="text" class="form-control mb-3" id="clienteIdInput" value="C1" placeholder="Ej. C1">
 
-                        <h6 class="text-uppercase text-muted mt-4">Crear envío</h6>
+                        <h6 class="text-uppercase text-muted mt-4">Crear envío con ruta dinámica</h6>
                         <form id="envioForm" class="row g-2">
                             <div class="col-12">
                                 <label class="form-label small text-muted mb-1">Descripción del paquete:</label>
-                                <input type="text" class="form-control form-control-sm" id="envioDescripcion" placeholder="Descripción del paquete" required>
+                                <input type="text" class="form-control form-control-sm" id="envioDescripcion" placeholder="Ej. Repuestos de cómputo" required>
                             </div>
 
                             <!-- Mini mapa para seleccionar ubicación -->
                             <div class="col-12 my-2">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="form-label small text-muted mb-0"><b>🗺️ Mini mapa de envío:</b></label>
+                                    <label class="form-label small text-muted mb-0"><b>🗺️ Mini mapa de envío dinámico:</b></label>
                                     <span class="badge bg-light text-primary border" id="clientCoordsLabel" style="font-size: 0.75rem;">Haz clic en el mapa</span>
                                 </div>
-                                <div id="clientMap" style="height: 230px; width: 100%; border-radius: 8px; border: 1px solid #ced4da;"></div>
+                                <div id="clientMap" style="height: 240px; width: 100%; border-radius: 8px; border: 1px solid #ced4da;"></div>
                                 <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-1">
                                     <div class="btn-group btn-group-sm" role="group">
-                                        <input type="radio" class="btn-check" name="mapTarget" id="targetOrigen" value="origen" checked autocomplete="off">
-                                        <label class="btn btn-outline-success btn-sm py-0" for="targetOrigen" style="font-size: 0.75rem;">🟢 1. Fijar Origen (buscar vehículos)</label>
+                                        <input type="radio" class="btn-check" name="mapTarget" id="targetDestino" value="destino" checked autocomplete="off">
+                                        <label class="btn btn-outline-primary btn-sm py-1" for="targetDestino" style="font-size: 0.75rem;">📦 1. Dónde está el Pedido (Recogida)</label>
 
-                                        <input type="radio" class="btn-check" name="mapTarget" id="targetDestino" value="destino" autocomplete="off">
-                                        <label class="btn btn-outline-danger btn-sm py-0" for="targetDestino" style="font-size: 0.75rem;">🔴 2. Fijar Destino (entrega)</label>
+                                        <input type="radio" class="btn-check" name="mapTarget" id="targetOrigen" value="origen" autocomplete="off">
+                                        <label class="btn btn-outline-success btn-sm py-1" for="targetOrigen" style="font-size: 0.75rem;">🟢 2. Al Origen / Entrega (Cliente)</label>
                                     </div>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="btnClientGps" style="font-size: 0.75rem;" title="Usar mi ubicación GPS actual">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-1" id="btnClientGps" style="font-size: 0.75rem;" title="Usar mi ubicación GPS actual">
                                         🎯 Mi GPS
                                     </button>
                                 </div>
                             </div>
 
-                            <!-- Vehículos disponibles en la zona del origen -->
+                            <!-- Vehículos disponibles en la zona -->
                             <div class="col-12 my-2" id="nearbyVehiclesSection" style="display: none;">
                                 <div class="p-2 border rounded bg-light">
                                     <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="small fw-bold text-dark">🚗 Vehículos en la zona de origen:</span>
+                                        <span class="small fw-bold text-dark">🚗 Vehículos disponibles en la zona:</span>
                                         <span class="badge bg-secondary" id="selectedVehicleBadge" style="font-size: 0.75rem;">Ninguno seleccionado</span>
                                     </div>
                                     <div id="nearbyVehiclesList" class="d-flex flex-wrap gap-2"></div>
@@ -219,17 +219,34 @@
                             </div>
 
                             <div class="col-6">
-                                <label class="form-label small text-muted mb-1">Origen:</label>
-                                <input type="text" class="form-control form-control-sm" id="envioOrigen" placeholder="Origen" required>
+                                <label class="form-label small text-muted mb-1">Dónde está el Pedido (Recogida):</label>
+                                <input type="text" class="form-control form-control-sm" id="envioDestino" placeholder="Ubicación del pedido" required>
                             </div>
                             <div class="col-6">
-                                <label class="form-label small text-muted mb-1">Destino:</label>
-                                <input type="text" class="form-control form-control-sm" id="envioDestino" placeholder="Destino" required>
+                                <label class="form-label small text-muted mb-1">Al Origen / Entrega (Cliente):</label>
+                                <input type="text" class="form-control form-control-sm" id="envioOrigen" placeholder="Punto de entrega / origen" required>
                             </div>
-                            <div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100">Crear envío</button></div>
+                            <div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100 fw-bold">🚀 Crear envío y despachar ruta</button></div>
                         </form>
 
-                        <h6 class="text-uppercase text-muted mt-4">Mis envíos</h6>
+                        <!-- Banner de Estado de la Ruta Dinámica en vivo -->
+                        <div id="dynamicRouteStatusBox" class="alert alert-info py-2 px-3 mt-3 d-none" style="font-size: 0.85rem; border-left: 4px solid #0d6efd;">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="fw-bold" id="dynRouteVehicleTitle">🚗 Ruta Dinámica en Curso</span>
+                                <span class="badge bg-primary" id="dynRouteStatusBadge">Hacia el pedido</span>
+                            </div>
+                            <div class="small text-dark" id="dynRouteStepDesc">
+                                El vehículo se dirige a recoger el pedido.
+                            </div>
+                            <div class="progress mt-2" style="height: 6px;">
+                                <div id="dynRouteProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 25%;"></div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+                            <h6 class="text-uppercase text-muted mb-0">Mis envíos y pedidos</h6>
+                            <span class="small text-muted" style="font-size: 0.75rem;">Haz clic para rastrear</span>
+                        </div>
                         <ul class="list-group" id="envioListCliente"></ul>
                     </div>
                 </div>
