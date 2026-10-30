@@ -1,13 +1,14 @@
 {
-  "name": "despacho-logistico-backend",
+  "name": "amo-backend",
   "version": "1.0.0",
-  "description": "Backend del Centro de Despacho Logistico - Fase 1 (Primer Parcial)",
+  "description": "AMO - Centro de Despacho Logistico - Backend (Fase 1 / Primer Parcial)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
+    "express-session": "^1.19.0",
     "socket.io": "^4.7.5"
   }
 }
