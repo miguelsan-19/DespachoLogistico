@@ -80,7 +80,10 @@
         const lock = AMO.state.lockedVehicles[v.vehicleId];
         const estado = (AMO.state.vehicleStatuses[v.vehicleId] || {}).estado || 'disponible';
         const hasDriver = !!choferDe(v.vehicleId);
-        const bloqueadoPorOtro = (lock && lock.socketId !== AMO.socket.id) || estado === 'en_ruta' || estado === 'entregado';
+        const esBloqueoPropio = !!lock && lock.socketId === AMO.socket.id;
+        const bloqueadoPorOtro = (!!lock && !esBloqueoPropio) ||
+            (estado === 'reservado' && !esBloqueoPropio) ||
+            estado === 'en_ruta' || estado === 'entregado';
         const esMio = selectedClientVehicleId === v.vehicleId && !bloqueadoPorOtro;
         return { hasDriver, bloqueadoPorOtro, esMio };
     }
@@ -88,6 +91,8 @@
     function renderVehiculosCercanosUI(lista) {
         const section = document.getElementById('nearbyVehiclesSection');
         const cont = document.getElementById('nearbyVehiclesList');
+        // Los tooltips de Bootstrap se montan fuera del botón: un botón disabled no recibe hover.
+        cont.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => bootstrap.Tooltip.getInstance(el)?.dispose());
         section.style.display = 'block';
         if (!lista.length) { cont.innerHTML = '<span class="text-muted small">No hay vehículos conectados.</span>'; return; }
         cont.innerHTML = lista.map(v => {
@@ -100,7 +105,7 @@
                 : bloqueadoPorOtro
                     ? `Unidad ${v.vehicleId} ocupada. Espera su liberación.`
                     : `${driver.nombre} · ${v.distancia} km de distancia`;
-            return `<button type="button" class="${cls}" data-veh="${v.vehicleId}" data-bs-toggle="tooltip" data-bs-placement="top" title="${AMO.esc(tip)}">${AMO.esc(texto)}</button>`;
+            return `<span class="amo-vehicle-tooltip" tabindex="0" data-bs-toggle="tooltip" data-bs-placement="top" title="${AMO.esc(tip)}"><button type="button" class="${cls}" data-veh="${v.vehicleId}" ${(!hasDriver || bloqueadoPorOtro) ? 'disabled aria-disabled="true"' : ''}>${AMO.esc(texto)}</button></span>`;
         }).join('');
         cont.querySelectorAll('[data-veh]').forEach(btn => btn.addEventListener('click', () => {
             const v = lista.find(x => x.vehicleId === btn.dataset.veh);
@@ -108,7 +113,7 @@
             if (!hasDriver || bloqueadoPorOtro) return;
             alternarSeleccion(v.vehicleId);
         }));
-        // Reinicia los tooltips de Bootstrap tras cada repintado (se pierden al reemplazar el HTML)
+        // Reinicia los tooltips de Bootstrap tras cada repintado.
         cont.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
             const previo = bootstrap.Tooltip.getInstance(el);
             if (previo) previo.dispose();
@@ -151,8 +156,8 @@
     }
 
     function alternarSeleccion(vehicleId) {
-        const { bloqueadoPorOtro } = estadoDeSeleccion({ vehicleId });
-        if (bloqueadoPorOtro) { AMO.toast({ titulo: 'No disponible', mensaje: `La unidad ${vehicleId} está ocupada.`, nivel: 'peligro' }); return; }
+        const { hasDriver, bloqueadoPorOtro } = estadoDeSeleccion({ vehicleId });
+        if (!hasDriver || bloqueadoPorOtro) { AMO.toast({ titulo: 'No disponible', mensaje: `La unidad ${vehicleId} está ocupada o no tiene chofer.`, nivel: 'peligro' }); return; }
         if (selectedClientVehicleId === vehicleId) {
             detenerTemporizador();
             AMO.socket.emit('vehiculo:desbloquear', { vehicleId });
@@ -290,19 +295,96 @@
             renderAvisosCliente();
         });
         AMO.socket.on('telemetry', (v) => { AMO.state.vehicles[v.vehicleId] = v; actualizarVehiculosCercanos(); });
-        AMO.socket.on('vehiculo:bloqueado', () => actualizarVehiculosCercanos());
-        AMO.socket.on('vehiculo:desbloqueado', () => actualizarVehiculosCercanos());
-        AMO.socket.on('vehiculo:bloqueo_rechazado', (d) => AMO.toast({ titulo: 'Vehículo ocupado', mensaje: d.message, nivel: 'peligro' }));
+        AMO.socket.on('vehiculo:bloqueado', (bloqueo) => {
+            AMO.state.lockedVehicles[bloqueo.vehicleId] = bloqueo;
+            AMO.state.vehicleStatuses[bloqueo.vehicleId] = { estado: 'reservado', envioId: null };
+            actualizarVehiculosCercanos();
+        });
+        AMO.socket.on('vehiculo:desbloqueado', ({ vehicleId }) => {
+            delete AMO.state.lockedVehicles[vehicleId];
+            actualizarVehiculosCercanos();
+        });
+        AMO.socket.on('vehiculo:estado', ({
+            vehicleId,
+            estado,
+            envioId
+        }) => {
+
+            // Actualizar estado local del vehículo.
+            AMO.state.vehicleStatuses[vehicleId] = {
+                estado,
+                envioId
+            };
+
+            // Volver a pintar la lista de vehículos.
+            actualizarVehiculosCercanos();
+
+        });
+        AMO.socket.on('vehiculo:bloqueo_rechazado', (d) => {
+            if (selectedClientVehicleId === d.vehicleId) {
+                detenerTemporizador();
+                selectedClientVehicleId = null;
+                document.getElementById('envioVehiculo').value = '';
+                actualizarBadgeSeleccion(null);
+            }
+            actualizarVehiculosCercanos();
+            AMO.toast({ titulo: 'Vehículo ocupado', mensaje: d.message, nivel: 'peligro' });
+        });
         AMO.socket.on('vehiculo:tiempo_agotado', (d) => AMO.toast({ titulo: 'Tiempo agotado', mensaje: d.message, nivel: 'advertencia' }));
         AMO.socket.on('envio:creado', (e) => { AMO.state.envios[e.id] = e; renderEnviosCliente(); });
         AMO.socket.on('envio:actualizado', (e) => {
-            AMO.state.envios[e.id] = e; renderEnviosCliente();
-            if (e.id === activeSelectedEnvioId && e.vehicleId && AMO.state.activeDynamicRoutes[e.vehicleId]) actualizarBannerRuta(AMO.state.activeDynamicRoutes[e.vehicleId]);
-        });
-        AMO.socket.on('ruta:dinamica', (r) => {
-            AMO.state.activeDynamicRoutes[r.vehicleId] = r;
-            const envio = Object.values(AMO.state.envios).find(e => e.vehicleId === r.vehicleId && e.clienteId === AMO.state.usuario.clienteId);
-            if (envio && (envio.id === activeSelectedEnvioId || !activeSelectedEnvioId)) { activeSelectedEnvioId = envio.id; actualizarBannerRuta(r); if (clientMap) pintarRutaDinamica(r, clientMap, clientRouteLayers); }
+
+            // Actualizar los datos del pedido.
+            AMO.state.envios[e.id] = e;
+
+            // Actualizar la lista de mis pedidos.
+            renderEnviosCliente();
+
+            // SI EL PEDIDO TERMINÓ
+            if (
+                e.id === activeSelectedEnvioId &&
+                ['entregado', 'cancelado'].includes(e.estado)
+            ) {
+
+                // Ocultar el banner del recorrido.
+                actualizarBannerRuta(null);
+
+                // Quitar el pedido seleccionado.
+                activeSelectedEnvioId = null;
+
+                // Eliminar la ruta dibujada en el mapa.
+                if (e.vehicleId) {
+
+                    delete AMO.state.activeDynamicRoutes[e.vehicleId];
+
+                    if (
+                        clientRouteLayers[e.vehicleId] &&
+                        clientMap
+                    ) {
+
+                        clientMap.removeLayer(
+                            clientRouteLayers[e.vehicleId]
+                        );
+
+                        delete clientRouteLayers[e.vehicleId];
+                    }
+                }
+
+                return;
+            }
+
+            // Si el pedido continúa, actualizar su recorrido.
+            if (
+                e.id === activeSelectedEnvioId &&
+                e.vehicleId &&
+                AMO.state.activeDynamicRoutes[e.vehicleId]
+            ) {
+
+                actualizarBannerRuta(
+                    AMO.state.activeDynamicRoutes[e.vehicleId]
+                );
+            }
+
         });
     });
 

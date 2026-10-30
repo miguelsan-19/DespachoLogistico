@@ -38,9 +38,22 @@ document.getElementById('cerrarSesion').addEventListener('click', async () => {
     await fetch('/api/logout', { method: 'POST' });
     location.replace('/login.html');
 });
-socket.on('connect_error', () => {
-    statusEl.textContent = 'Sesión no válida';
-    location.replace('/login.html');
+socket.on('connect_error', async (error) => {
+    console.error('Error de Socket.IO:', error.message);
+
+    if (statusEl) {
+        statusEl.textContent = 'Error de conexión';
+    }
+
+    try {
+        const respuesta = await fetch('/api/me');
+
+        if (respuesta.status === 401) {
+            window.location.replace('/login.html');
+        }
+    } catch (err) {
+        console.error('No se pudo verificar la sesión:', err);
+    }
 });
 socket.on('operacion:rechazada', data => alert(data.message));
 function mostrarPanelDeSesion(usuario) {

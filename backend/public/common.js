@@ -289,18 +289,37 @@ function iniciarAMO(usuario) {
     });
 
     document.getElementById('cerrarSesion').addEventListener('click', async () => {
-        await fetch('/api/logout', { method: 'POST' });
-        window.location.href = '/login.html';
+        try {
+            const respuesta = await fetch('/api/logout', { method: 'POST' });
+            if (!respuesta.ok) throw new Error('No se pudo cerrar la sesión.');
+            AMO.socket.disconnect();
+            window.location.replace('/login.html');
+        } catch (error) {
+            console.error('Error al cerrar sesión:', error);
+            AMO.toast({ titulo: 'Error', mensaje: error.message, nivel: 'peligro' });
+        }
     });
 }
-
 (async function arrancar() {
     try {
         const res = await fetch('/api/me');
-        if (!res.ok) { window.location.href = '/login.html'; return; }
+
+        if (res.status === 401) {
+            window.location.href = '/login.html';
+            return;
+        }
+
+        if (!res.ok) {
+            throw new Error(`Error al verificar sesión: ${res.status}`);
+        }
+
         const { usuario } = await res.json();
+
+        console.log('Usuario autenticado:', usuario.username, usuario.rol);
+
         iniciarAMO(usuario);
+
     } catch (e) {
-        window.location.href = '/login.html';
+        console.error('Error al iniciar dashboard:', e);
     }
 })();

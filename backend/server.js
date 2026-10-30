@@ -108,7 +108,7 @@ const novedades = []; // Lista de novedades/incidencias reportadas por choferes
 
 // Datos iniciales para que el sistema esté listo para evaluar sin configuración manual previa:
 const clientes = {
-    'C1': { id: 'C1', nombre: 'Juan Pérez (Cliente)', telefono: '0991234567', empresa: 'Distribuidora Andina S.A.' }
+    'C1': { id: 'C1', nombre: 'Juan Pérez (Cliente)', telefono: '0991234567', empresa: 'Distribuidora Andina S.A.' },
 };
 
 const choferes = {
@@ -203,7 +203,10 @@ udpServer.on('message', (msg, rinfo) => {
             envios[envioId].estado = status;
             io.emit('envio:actualizado', envios[envioId]);
             if (status === 'entregado') {
+
                 const envio = envios[envioId];
+
+                // Notificar al cliente que su pedido llegó.
                 notificar({
                     para: `cliente:${envio.clienteId}`,
                     tipo: 'envio',
@@ -212,6 +215,41 @@ udpServer.on('message', (msg, rinfo) => {
                     mensaje: `Tu envío ${envioId} fue entregado con éxito.`,
                     data: { envioId }
                 });
+
+                // LIBERACIÓN AUTOMÁTICA DEL VEHÍCULO
+                if (vehicleAssignments[vehicleId] === envioId) {
+
+                    // Eliminar la asignación del vehículo.
+                    delete vehicleAssignments[vehicleId];
+
+                    // Eliminar la ruta activa.
+                    delete activeDynamicRoutes[vehicleId];
+
+                    // Avisar al simulador que finalizó la ruta.
+                    const comando = Buffer.from(JSON.stringify({
+                        type: 'cancel_route',
+                        vehicleId
+                    }));
+
+                    udpServer.send(
+                        comando,
+                        SIMULATOR_UDP_PORT,
+                        SIMULATOR_HOST
+                    );
+
+                    // Cambiar el estado a disponible.
+                    actualizarEstadoVehiculo(vehicleId);
+
+                    // Notificar a todos los usuarios conectados.
+                    io.emit('vehiculo:liberado', {
+                        vehicleId,
+                        envioId
+                    });
+
+                    console.log(
+                        `[ENTREGA] Vehículo ${vehicleId} liberado automáticamente`
+                    );
+                }
             }
             // Actualizar el estado del vehículo en tiempo real
             if (vehicleAssignments[vehicleId] === envioId) {
@@ -426,6 +464,7 @@ io.on('connection', (socket) => {
                 if (lockTimeouts[vId]) { clearTimeout(lockTimeouts[vId]); delete lockTimeouts[vId]; }
                 delete lockedVehicles[vId];
                 io.emit('vehiculo:desbloqueado', { vehicleId: vId });
+                actualizarEstadoVehiculo(vId);
             }
         }
         if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
@@ -439,13 +478,14 @@ io.on('connection', (socket) => {
                 delete lockedVehicles[vehicleId];
                 delete lockTimeouts[vehicleId];
                 io.emit('vehiculo:desbloqueado', { vehicleId });
+                actualizarEstadoVehiculo(vehicleId);
                 socket.emit('vehiculo:tiempo_agotado', { vehicleId, message: `Tiempo agotado (15 segundos): no confirmaste el pedido. El vehículo ${vehicleId} fue deseleccionado automáticamente.` });
             }
         }, LOCK_TIMEOUT_MS);
 
         io.emit('vehiculo:bloqueado', lockedVehicles[vehicleId]);
         actualizarEstadoVehiculo(vehicleId);
-        console.log(`[Socket.io] Vehículo ${vehicleId} bloqueado por cliente ${clienteId} (${socket.id}) - expira en 15s`);
+        console.log(`[Socket.io] Vehículo ${vehicleId} bloqueado por cliente ${usuario.clienteId} (${socket.id}) - expira en 15s`);
     });
 
     socket.on('vehiculo:desbloquear', (data) => {
@@ -641,43 +681,67 @@ io.on('connection', (socket) => {
 
     // ---- Liberar un vehículo a la fuerza (reservado, en ruta o "pegado") ----
     socket.on('vehiculo:forzar_liberar', (data, ack) => {
-        if (!esRol('admin')) return denegar();
-        const { vehicleId } = data || {};
-        if (!vehicleId) return ack?.({ ok: false, error: 'Falta el vehículo.' });
-        let liberoAlgo = false;
 
-        if (lockedVehicles[vehicleId]) {
-            if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
-            delete lockedVehicles[vehicleId];
-            io.emit('vehiculo:desbloqueado', { vehicleId });
-            liberoAlgo = true;
+        if (!esRol('admin')) {
+            return ack?.({
+                ok: false,
+                error: 'Solo el administrador puede liberar vehículos.'
+            });
+        }
+
+        const { vehicleId } = data || {};
+
+        if (!vehicleId) {
+            return ack?.({
+                ok: false,
+                error: 'Falta identificar el vehículo.'
+            });
         }
 
         const envioId = vehicleAssignments[vehicleId];
-        if (envioId) {
-            const envio = envios[envioId];
-            if (envio && !['entregado', 'cancelado'].includes(envio.estado)) {
-                envio.estado = 'cancelado';
-                io.emit('envio:actualizado', envio);
-                notificar({
-                    para: `cliente:${envio.clienteId}`,
-                    tipo: 'envio',
-                    nivel: 'advertencia',
-                    titulo: 'Envío cancelado',
-                    mensaje: `El administrador liberó el vehículo ${vehicleId} y tu envío ${envioId} quedó cancelado.`,
-                    data: { envioId }
-                });
-            }
-            delete vehicleAssignments[vehicleId];
-            delete activeDynamicRoutes[vehicleId];
-            const cmd = Buffer.from(JSON.stringify({ type: 'cancel_route', vehicleId }));
-            udpServer.send(cmd, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
-            liberoAlgo = true;
+
+        if (!envioId) {
+            return ack?.({
+                ok: false,
+                error: 'El vehículo no tiene un pedido pendiente de liberación.'
+            });
         }
 
-        if (!liberoAlgo) return ack?.({ ok: false, error: 'Ese vehículo ya está disponible.' });
+        const envio = envios[envioId];
+
+        // No permitir liberar vehículos que todavía están trabajando.
+        if (!envio || envio.estado !== 'entregado') {
+            return ack?.({
+                ok: false,
+                error: 'El vehículo todavía no ha finalizado su entrega.'
+            });
+        }
+
+        // Liberar el vehículo.
+        delete vehicleAssignments[vehicleId];
+        delete activeDynamicRoutes[vehicleId];
+
+        // Actualizar su estado a disponible.
         actualizarEstadoVehiculo(vehicleId);
-        ack?.({ ok: true });
+
+        // Notificar a todos los clientes.
+        io.emit('vehiculo:liberado', {
+            vehicleId,
+            envioId
+        });
+
+        io.emit('vehiculo:desbloqueado', {
+            vehicleId
+        });
+
+        console.log(
+            `[ADMIN] Vehículo ${vehicleId} liberado después de entregar ${envioId}`
+        );
+
+        ack?.({
+            ok: true,
+            message: 'Vehículo liberado correctamente.'
+        });
     });
 
     // ---- Incidencias / novedades: gestión del admin ----
@@ -775,6 +839,9 @@ io.on('connection', (socket) => {
         const { envioId } = data || {};
         if (!envioId || !envios[envioId]) return;
         const envio = envios[envioId];
+        if (['entregado', 'cancelado'].includes(envio.estado)) {
+            return;
+        }
         if (esRol('cliente') && envio.clienteId !== usuario.clienteId) return denegar();
         console.log(`[Socket.io] Pedido ${envioId} seleccionado por ${socket.id}`);
         if (envio.vehicleId) {
@@ -812,13 +879,29 @@ io.on('connection', (socket) => {
             data: { envioId }
         });
 
-        // Liberar el vehículo automáticamente: ya no hay que esperar a que el admin lo haga a mano
-        delete vehicleAssignments[vehicleId];
+
+
+        // Detener la ruta del simulador.
         delete activeDynamicRoutes[vehicleId];
-        const cmd = Buffer.from(JSON.stringify({ type: 'cancel_route', vehicleId }));
+
+        const cmd = Buffer.from(JSON.stringify({
+            type: 'cancel_route',
+            vehicleId
+        }));
+
         udpServer.send(cmd, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
+
+
+
         actualizarEstadoVehiculo(vehicleId);
+
+        io.emit('vehiculo:entregado', {
+            vehicleId,
+            envioId
+        });
+
         ack?.({ ok: true, envio });
+
     });
     const TIPOS_NOVEDAD = ['accidente', 'falla_mecanica', 'trafico', 'retraso', 'paquete', 'cliente_ausente', 'otro'];
     const AFECTAN_ENTREGA = ['accidente', 'falla_mecanica', 'trafico', 'retraso'];
@@ -887,6 +970,7 @@ io.on('connection', (socket) => {
                 if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
                 delete lockedVehicles[vehicleId];
                 io.emit('vehiculo:desbloqueado', { vehicleId });
+                actualizarEstadoVehiculo(vehicleId);
                 console.log(`[Socket.io] Vehículo ${vehicleId} liberado por desconexión`);
             }
         }
