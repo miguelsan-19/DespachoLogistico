@@ -10,13 +10,66 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const socketIO = require('socket.io');
+const session = require('express-session');
 const dgram = require('dgram'); // Módulo nativo de Node.js para sockets UDP
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Login académico sin JWT ni base de datos: sesiones en memoria.
+const cuentas = [
+    { username: 'admin', password: 'admin123', rol: 'admin', nombre: 'Administrador' },
+    { username: 'juan', password: '1234', rol: 'cliente', nombre: 'Juan Pérez', clienteId: 'C1' },
+    { username: 'pedro', password: '4321', rol: 'cliente', nombre: 'Pedro García', clienteId: 'C2' },
+    { username: 'carlos', password: '1234', rol: 'chofer', nombre: 'Carlos Mendoza', choferId: 'CH1' }
+];
+const sesiones = session({
+    secret: process.env.SESSION_SECRET || 'clave-demostracion-academica-cambiar',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 }
+});
+app.use(express.json());
+app.use(sesiones);
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body || {};
+    const cuenta = cuentas.find(c => c.username === username && c.password === password);
+    if (!cuenta) return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+    req.session.regenerate(err => {
+        if (err) return res.status(500).json({ error: 'No se pudo iniciar sesión.' });
+        const { password: omitida, ...usuario } = cuenta;
+        req.session.usuario = usuario;
+        req.session.save(error => error ? res.status(500).json({ error: 'No se guardó la sesión.' }) : res.json({ usuario }));
+    });
+});
+app.get('/api/me', (req, res) => {
+    if (!req.session.usuario) return res.status(401).json({ error: 'Inicia sesión.' });
+    res.json({ usuario: req.session.usuario });
+});
+app.post('/api/logout', (req, res) => {
+    const sessionId = req.sessionID;
+    req.session.destroy(err => {
+        if (err) return res.status(500).json({ error: 'No se pudo cerrar sesión.' });
+        res.clearCookie('connect.sid');
+        for (const s of io.sockets.sockets.values()) {
+            if (s.request.sessionID === sessionId) s.disconnect(true);
+        }
+        res.json({ ok: true });
+    });
+});
+app.get('/', (req, res) => res.redirect(req.session.usuario ? '/dashboard' : '/login.html'));
+app.get('/dashboard', (req, res) => {
+    if (!req.session.usuario) return res.redirect('/login.html');
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.use((req, res, next) => {
+    if (req.path === '/index.html') return res.redirect('/dashboard');
+    next();
+});
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+io.engine.use(sesiones);
+io.use((socket, next) => socket.request.session?.usuario ? next() : next(new Error('Inicia sesión para conectarte.')));
 
 // ---------------------------------------------------------------------
 // Estado en memoria de los vehículos y módulos
@@ -45,6 +98,10 @@ const envios = {};         // envioId -> { id, clienteId, descripcion, origen, d
 const lockedVehicles = {}; // vehicleId -> { vehicleId, clienteId, socketId, lockedAt }
 const lockTimeouts = {};   // vehicleId -> timeoutId (temporizador de 15 segundos para confirmar pedido)
 const activeDynamicRoutes = {}; // vehicleId -> { vehicleId, envioId, waypoints, status }
+const vehicleAssignments = {}; //// Permanecen ocupados hasta que el administrador los libere.
+
+// Estado visible de cada vehículo
+const vehicleStatuses = {};
 
 let nextClienteId = 2;
 let nextChoferId = 4;
@@ -90,6 +147,10 @@ udpServer.on('message', (msg, rinfo) => {
         if (envios[envioId].estado !== status) {
             envios[envioId].estado = status;
             io.emit('envio:actualizado', envios[envioId]);
+            // Actualizar el estado del vehículo en tiempo real
+            if (vehicleAssignments[vehicleId] === envioId) {
+                actualizarEstadoVehiculo(vehicleId);
+            }
             console.log(`[Estado Pedido] ${envioId} actualizado a: ${status}`);
         }
     }
@@ -177,10 +238,58 @@ function iniciarRutaDinamica(envioId, vehicleId) {
     io.emit('envio:actualizado', envio);
 }
 
+function obtenerEstadoVehiculo(vehicleId) {
+
+    const envioId = vehicleAssignments[vehicleId];
+
+    if (envioId) {
+
+        const envio = envios[envioId];
+
+        if (envio && envio.estado === 'entregado') {
+            return {
+                estado: 'entregado',
+                envioId
+            };
+        }
+
+        return {
+            estado: 'en_ruta',
+            envioId
+        };
+    }
+
+    if (lockedVehicles[vehicleId]) {
+        return {
+            estado: 'reservado',
+            envioId: null
+        };
+    }
+
+    return {
+        estado: 'disponible',
+        envioId: null
+    };
+}
+
+function actualizarEstadoVehiculo(vehicleId) {
+
+    vehicleStatuses[vehicleId] = obtenerEstadoVehiculo(vehicleId);
+
+    // Notificar a todos los usuarios conectados
+    io.emit('vehiculo:estado', {
+        vehicleId,
+        ...vehicleStatuses[vehicleId]
+    });
+}
+
 // ---------------------------------------------------------------------
 // WEBSOCKETS (Socket.io): Gestión de clientes, choferes y eventos
 // ---------------------------------------------------------------------
 io.on('connection', (socket) => {
+    const usuario = socket.request.session.usuario;
+    const esRol = rol => usuario.rol === rol;
+    const denegar = () => socket.emit('operacion:rechazada', { message: 'No tienes permisos para realizar esta acción.' });
     console.log(`[Socket.io] Cliente conectado: ${socket.id}`);
 
     // Estado inicial: snapshot de todo lo que existe hasta ahora
@@ -192,12 +301,91 @@ io.on('connection', (socket) => {
         rutas,
         envios,
         lockedVehicles,
-        activeDynamicRoutes
+        vehicleStatuses,
+        activeDynamicRoutes,
+        usuario
+    });
+    // LIBERAR VEHÍCULO - SOLO ADMINISTRADOR
+    socket.on('vehiculo:liberar', (data) => {
+
+        const usuario = socket.request.session?.usuario;
+
+        if (!usuario || usuario.rol !== 'admin') {
+            socket.emit('operacion:rechazada', {
+                message: 'Solo el administrador puede liberar vehículos.'
+            });
+            return;
+        }
+
+        const { vehicleId } = data || {};
+
+        const envioId = vehicleAssignments[vehicleId];
+
+        if (!envioId) {
+            return;
+        }
+
+        const envio = envios[envioId];
+
+        // Solo liberar después de entregar el pedido
+        if (!envio || envio.estado !== 'entregado') {
+
+            socket.emit('operacion:rechazada', {
+                message: 'El vehículo todavía no ha terminado su recorrido.'
+            });
+
+            return;
+        }
+
+        // Liberar la unidad
+        delete vehicleAssignments[vehicleId];
+        delete activeDynamicRoutes[vehicleId];
+
+        // Detener la ruta anterior en el simulador
+        const comando = Buffer.from(JSON.stringify({
+            type: 'cancel_route',
+            vehicleId
+        }));
+
+        udpServer.send(
+            comando,
+            SIMULATOR_UDP_PORT,
+            SIMULATOR_HOST
+        );
+
+        actualizarEstadoVehiculo(vehicleId);
+
+        io.emit('vehiculo:liberado', {
+            vehicleId,
+            envioId
+        });
+
+        console.log(`Vehículo ${vehicleId} liberado por administrador`);
     });
 
     // ---------------- Bloqueo / Reserva de Vehículo (Exclusión Mutua) ----------------
     socket.on('vehiculo:bloquear', (data) => {
+        if (!esRol('cliente')) return denegar();
         const { vehicleId, clienteId } = data || {};
+        console.log('===== RESERVA =====');
+        console.log('Vehículo:', vehicleId);
+        console.log('Cliente:', clienteId);
+        console.log('Cliente autenticado:', usuario.clienteId);
+        console.log('Reserva confirmada:', vehicleAssignments[vehicleId]);
+        console.log('Bloqueo temporal:', lockedVehicles[vehicleId]);
+        console.log('Socket:', socket.id);
+        // Verificar que el vehículo no tenga un envío activo
+        if (vehicleAssignments[vehicleId]) {
+
+            socket.emit('vehiculo:bloqueo_rechazado', {
+                vehicleId,
+                message: `El vehículo ${vehicleId} está ocupado.
+        Debes esperar hasta que sea liberado.`
+            });
+
+            return;
+        }
+        if (clienteId && clienteId !== usuario.clienteId) return denegar();
         if (!vehicleId) return;
 
         // Validar que el vehículo tenga un chofer asignado
@@ -211,6 +399,7 @@ io.on('connection', (socket) => {
         }
 
         const currentLock = lockedVehicles[vehicleId];
+
         // Si ya está bloqueado por otro socket, rechazar
         if (currentLock && currentLock.socketId !== socket.id) {
             socket.emit('vehiculo:bloqueo_rechazado', {
@@ -242,7 +431,7 @@ io.on('connection', (socket) => {
 
         lockedVehicles[vehicleId] = {
             vehicleId,
-            clienteId: clienteId || 'cliente',
+            clienteId: usuario.clienteId,
             socketId: socket.id,
             lockedAt: Date.now(),
             expiresIn: LOCK_TIMEOUT_MS
@@ -264,10 +453,12 @@ io.on('connection', (socket) => {
         }, LOCK_TIMEOUT_MS);
 
         io.emit('vehiculo:bloqueado', lockedVehicles[vehicleId]);
+        actualizarEstadoVehiculo(vehicleId);
         console.log(`[Socket.io] Vehículo ${vehicleId} bloqueado por cliente ${clienteId} (${socket.id}) - expira en 15s`);
     });
 
     socket.on('vehiculo:desbloquear', (data) => {
+        if (!esRol('cliente')) return denegar();
         const { vehicleId } = data || {};
         if (!vehicleId) return;
 
@@ -279,18 +470,21 @@ io.on('connection', (socket) => {
             }
             delete lockedVehicles[vehicleId];
             io.emit('vehiculo:desbloqueado', { vehicleId });
+            actualizarEstadoVehiculo(vehicleId);
             console.log(`[Socket.io] Vehículo ${vehicleId} desbloqueado/desmarcado por ${socket.id}`);
         }
     });
 
     // ---------------- Rol Administrador ----------------
     socket.on('cliente:crear', (data) => {
+        if (!esRol('admin')) return denegar();
         const id = `C${nextClienteId++}`;
         clientes[id] = { id, nombre: data.nombre || 'Sin nombre', telefono: data.telefono || '' };
         io.emit('cliente:creado', clientes[id]);
     });
 
     socket.on('chofer:crear', (data) => {
+        if (!esRol('admin')) return denegar();
         const id = `CH${nextChoferId++}`;
         choferes[id] = {
             id,
@@ -302,6 +496,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('ruta:crear', (data) => {
+        if (!esRol('admin')) return denegar();
         const id = `R${nextRutaId++}`;
         rutas[id] = {
             id,
@@ -317,7 +512,20 @@ io.on('connection', (socket) => {
 
     // ---------------- Rol Cliente & Rutas Dinámicas ----------------
     socket.on('envio:crear', (data) => {
+        if (!esRol('cliente')) return denegar();
+        if (data?.clienteId && data.clienteId !== usuario.clienteId) return denegar();
         let assignedVehicleId = data.vehicleId || null;
+        if (assignedVehicleId) {
+            const lock = lockedVehicles[assignedVehicleId];
+            if (!lock || lock.socketId !== socket.id) {
+                socket.emit('operacion:rechazada', { message: 'Debes seleccionar y bloquear el vehículo antes de confirmar.' });
+                return;
+            }
+            if (Object.values(envios).some(e => e.vehicleId === assignedVehicleId && !['entregado', 'cancelado'].includes(e.estado))) {
+                socket.emit('operacion:rechazada', { message: 'El vehículo ya tiene un envío activo.' });
+                return;
+            }
+        }
         if (assignedVehicleId) {
             const hasDriver = Object.values(choferes).some((ch) => ch.vehicleId === assignedVehicleId);
             if (!hasDriver) {
@@ -328,7 +536,7 @@ io.on('connection', (socket) => {
         const id = `E${nextEnvioId++}`;
         envios[id] = {
             id,
-            clienteId: data.clienteId || 'desconocido',
+            clienteId: usuario.clienteId,
             descripcion: data.descripcion || '',
             origen: data.origen || '',
             destino: data.destino || '',
@@ -349,9 +557,27 @@ io.on('connection', (socket) => {
                 io.emit('vehiculo:desbloqueado', { vehicleId: assignedVehicleId });
             }
         }
+        // Registrar la asignación definitiva del vehículo
+        if (assignedVehicleId) {
+
+            // Evitar doble asignación
+            if (vehicleAssignments[assignedVehicleId]) {
+
+                socket.emit('operacion:rechazada', {
+                    message: 'Este vehículo ya tiene un envío asignado.'
+                });
+
+                delete envios[id];
+                return;
+            }
+
+            vehicleAssignments[assignedVehicleId] = id;
+        }
 
         io.emit('envio:creado', envios[id]);
-
+        if (assignedVehicleId) {
+            actualizarEstadoVehiculo(assignedVehicleId);
+        }
         // Si tiene vehículo asignado, iniciar automáticamente la ruta dinámica
         if (assignedVehicleId) {
             iniciarRutaDinamica(id, assignedVehicleId);
@@ -360,10 +586,12 @@ io.on('connection', (socket) => {
 
     // Cuando un cliente o administrador selecciona un pedido para activar/rastrear su ruta dinámica
     socket.on('envio:seleccionar', (data) => {
+        if (!esRol('admin') && !esRol('cliente')) return denegar();
         const { envioId } = data || {};
         if (!envioId || !envios[envioId]) return;
 
         const envio = envios[envioId];
+        if (esRol('cliente') && envio.clienteId !== usuario.clienteId) return denegar();
         console.log(`[Socket.io] Pedido ${envioId} seleccionado por ${socket.id}`);
 
         if (envio.vehicleId) {
@@ -380,10 +608,11 @@ io.on('connection', (socket) => {
 
     // ---------------- Rol Chofer ----------------
     socket.on('reportIncident', (data) => {
+        if (!esRol('chofer')) return denegar();
         const incident = {
             id: incidents.length + 1,
             vehicleId: data.vehicleId || 'desconocido',
-            choferId: data.choferId || null,
+            choferId: usuario.choferId,
             description: data.description || 'Sin descripcion',
             timestamp: Date.now()
         };

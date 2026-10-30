@@ -5,6 +5,7 @@
 // de azul al seleccionarlas.
 // No hay login real en esta fase: el rol se elige con los botones de arriba.
 
+
 const socket = io();
 
 const statusEl = document.getElementById('connectionStatus');
@@ -16,6 +17,9 @@ const choferes = {};
 const rutas = {};
 const envios = {};
 const lockedVehicles = {}; // vehicleId -> { vehicleId, clienteId, socketId }
+// Estados recibidos desde el servidor
+const vehicleStatuses = {};
+
 let incidentCount = 0;
 
 const VEHICLE_IDS = ['V001', 'V002', 'V003'];
@@ -30,23 +34,35 @@ const panels = {
     chofer: document.getElementById('panel-chofer')
 };
 
-roleButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-        roleButtons.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        Object.values(panels).forEach((p) => p.classList.add('d-none'));
-        panels[btn.dataset.role].classList.remove('d-none');
-        if (btn.dataset.role === 'admin') {
-            setTimeout(() => map.invalidateSize(), 50);
-        }
-        if (btn.dataset.role === 'cliente') {
-            setTimeout(() => {
-                initClientMap();
-                if (clientMap) clientMap.invalidateSize();
-            }, 80);
-        }
-    });
+document.getElementById('cerrarSesion').addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    location.replace('/login.html');
 });
+socket.on('connect_error', () => {
+    statusEl.textContent = 'Sesión no válida';
+    location.replace('/login.html');
+});
+socket.on('operacion:rechazada', data => alert(data.message));
+function mostrarPanelDeSesion(usuario) {
+    document.getElementById('usuarioSesion').textContent = usuario.nombre + ' · ' + usuario.rol;
+    Object.values(panels).forEach(p => p.classList.add('d-none'));
+    panels[usuario.rol].classList.remove('d-none');
+    if (usuario.rol === 'admin') {
+        panels.admin.classList.add('d-flex');
+        setTimeout(() => map.invalidateSize(), 100);
+    } else {
+        panels.admin.classList.remove('d-flex');
+    }
+    if (usuario.rol === 'cliente') {
+        clienteIdInput.value = usuario.clienteId;
+        clienteIdInput.readOnly = true;
+        setTimeout(() => { initClientMap(); if (clientMap) clientMap.invalidateSize(); }, 100);
+    }
+    if (usuario.rol === 'chofer') {
+        const chofer = document.getElementById('choferIdInput');
+        chofer.dataset.sesionChoferId = usuario.choferId;
+    }
+}
 
 // =======================================================================
 // Navegación por Sidebar de Módulos (Panel Administrador)
@@ -281,6 +297,21 @@ function renderVehicleList() {
     vehicleListEl.innerHTML = '';
     Object.values(vehicles).forEach((v) => {
         const color = getVehicleColor(v.vehicleId);
+        const estado = vehicleStatuses[v.vehicleId]?.estado || 'disponible';
+
+        const nombresEstado = {
+            disponible: 'Disponible',
+            reservado: 'Reservado',
+            en_ruta: 'En ruta',
+            entregado: 'Entregado'
+        };
+
+        const coloresEstado = {
+            disponible: 'bg-success',
+            reservado: 'bg-warning text-dark',
+            en_ruta: 'bg-primary',
+            entregado: 'bg-info text-dark'
+        };
         const li = document.createElement('li');
         li.className = 'list-group-item d-flex justify-content-between align-items-center px-0';
         const isLocked = !!lockedVehicles[v.vehicleId];
@@ -293,7 +324,17 @@ function renderVehicleList() {
                 <strong style="color: ${color};">${v.vehicleId}</strong>
                 ${isLocked ? '<span class="badge bg-danger ms-1" style="font-size:0.68rem;" title="Bloqueado por un cliente">🔒 Bloqueado</span>' : ''}
             </div>
-            <span class="badge ${badgeClass}">${v.speed} km/h · ${v.status}</span>
+            <div class="text-end">
+
+    <span class="badge ${coloresEstado[estado]}">
+        ${nombresEstado[estado]}
+    </span>
+
+    <div class="small text-muted mt-1">
+        ${v.speed} km/h
+    </div>
+
+</div>
         `;
         li.querySelector('div').addEventListener('click', () => {
             if (markers[v.vehicleId]) {
@@ -301,6 +342,32 @@ function renderVehicleList() {
                 markers[v.vehicleId].openPopup();
             }
         });
+        if (estado === 'entregado') {
+
+            const btnLiberar = document.createElement('button');
+
+            btnLiberar.className = 'btn btn-sm btn-success ms-2';
+
+            btnLiberar.textContent = 'Liberar';
+
+            btnLiberar.addEventListener('click', (event) => {
+
+                event.stopPropagation();
+
+                if (confirm(`¿Liberar el vehículo ${v.vehicleId}?`)) {
+
+                    socket.emit('vehiculo:liberar', {
+                        vehicleId: v.vehicleId
+                    });
+
+                }
+
+            });
+
+            li.appendChild(btnLiberar);
+        }
+
+
         vehicleListEl.appendChild(li);
     });
 }
@@ -512,8 +579,8 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return Number((R * c).toFixed(1));
 }
@@ -688,9 +755,16 @@ function updateNearbyVehicles() {
         const driver = getDriverForVehicle(v.vehicleId);
         const hasDriver = !!driver;
         const lock = lockedVehicles[v.vehicleId];
-        const isLockedByOther = lock && lock.socketId !== socket.id;
-        const isLockedByMe = lock && lock.socketId === socket.id;
 
+        const estado = vehicleStatuses[v.vehicleId]?.estado || 'disponible';
+
+        const isLockedByOther =
+            (lock && lock.socketId !== socket.id) ||
+            estado === 'en_ruta' ||
+            estado === 'entregado';
+
+        const isLockedByMe =
+            lock && lock.socketId === socket.id;
         if (!clientVehicleMarkers[v.vehicleId]) {
             clientVehicleMarkers[v.vehicleId] = L.marker([v.lat, v.lng], {
                 icon: createVehicleIcon(v.vehicleId)
@@ -777,9 +851,21 @@ function renderNearbyVehiclesUI(vehicleList) {
         const driver = getDriverForVehicle(v.vehicleId);
         const hasDriver = !!driver;
         const lock = lockedVehicles[v.vehicleId];
-        const isLockedByOther = lock && lock.socketId !== socket.id;
-        const isSelected = selectedClientVehicleId === v.vehicleId;
 
+        const estado = vehicleStatuses[v.vehicleId]?.estado || 'disponible';
+
+        const bloqueadoTemporalmente =
+            lock && lock.socketId !== socket.id;
+
+        const ocupadoPorEnvio =
+            estado === 'en_ruta' ||
+            estado === 'entregado';
+
+        const isLockedByOther =
+            bloqueadoTemporalmente || ocupadoPorEnvio;
+
+        const isSelected =
+            selectedClientVehicleId === v.vehicleId && !isLockedByOther;
         const card = document.createElement('div');
         let cardClass = 'client-vehicle-card';
         if (!hasDriver) cardClass += ' disabled-no-driver';
@@ -818,9 +904,22 @@ function renderNearbyVehiclesUI(vehicleList) {
             ${statusText}
         `;
 
+        // Tooltip informativo
+        card.title = isLockedByOther
+            ? ` Unidad ${v.vehicleId} ocupada. Espera su liberación.`
+            : !hasDriver
+                ? 'Vehículo sin conductor asignado.'
+                : `Seleccionar unidad ${v.vehicleId}`;
+
+        // Selección de vehículo
         card.addEventListener('click', () => {
-            if (!hasDriver) return;
+
+            if (!hasDriver || isLockedByOther) {
+                return;
+            }
+
             toggleVehicleSelection(v.vehicleId);
+
         });
 
         container.appendChild(card);
@@ -828,14 +927,25 @@ function renderNearbyVehiclesUI(vehicleList) {
 }
 
 // Bloquear / desmarcar un vehículo en tiempo real vía WebSockets
-window.toggleVehicleSelection = function(vehicleId) {
+window.toggleVehicleSelection = function (vehicleId) {
     const driver = getDriverForVehicle(vehicleId);
     if (!driver) return;
 
     const lock = lockedVehicles[vehicleId];
-    const isLockedByOther = lock && lock.socketId !== socket.id;
-    if (isLockedByOther) return;
 
+    const estado = vehicleStatuses[vehicleId]?.estado || 'disponible';
+
+    const isLockedByOther =
+        (lock && lock.socketId !== socket.id) ||
+        estado === 'en_ruta' ||
+        estado === 'entregado';
+
+    if (isLockedByOther) {
+
+        alert(`La unidad ${vehicleId} está ocupada.`);
+
+        return;
+    }
     // Si ya lo tiene seleccionado: DESMARCAR y DESBLOQUEAR
     if (selectedClientVehicleId === vehicleId) {
         stopVehicleSelectionTimer();
@@ -1054,7 +1164,7 @@ function updateDynamicRouteStatusBox(routeData) {
 }
 
 // Seleccionar un pedido (desde "Mis envíos" o al crearlo)
-window.seleccionarPedido = function(envioId) {
+window.seleccionarPedido = function (envioId) {
     if (!envioId || !envios[envioId]) return;
     activeSelectedEnvioId = envioId;
     const envio = envios[envioId];
@@ -1255,18 +1365,35 @@ socket.on('connect', () => {
     statusEl.className = 'badge bg-success';
 });
 
+// Actualizar estado de vehículos en tiempo real
+socket.on('vehiculo:estado', (data) => {
+
+    vehicleStatuses[data.vehicleId] = {
+        estado: data.estado,
+        envioId: data.envioId
+    };
+
+    renderVehicleList();
+
+    if (clientMap) {
+        updateNearbyVehicles();
+    }
+});
+
 socket.on('disconnect', () => {
     statusEl.textContent = 'Desconectado';
     statusEl.className = 'badge bg-danger';
 });
 
 socket.on('init', (data) => {
+    mostrarPanelDeSesion(data.usuario);
     Object.assign(vehicles, data.vehicles);
     Object.assign(clientes, data.clientes || {});
     Object.assign(choferes, data.choferes || {});
     Object.assign(rutas, data.rutas || {});
     Object.assign(envios, data.envios || {});
     Object.assign(lockedVehicles, data.lockedVehicles || {});
+    Object.assign(vehicleStatuses, data.vehicleStatuses || {});
     Object.assign(activeDynamicRoutes, data.activeDynamicRoutes || {});
     incidentCount = (data.incidents || []).length;
 
@@ -1275,7 +1402,9 @@ socket.on('init', (data) => {
     // Pintar rutas dinámicas activas si existen
     Object.values(activeDynamicRoutes).forEach((rData) => {
         if (map) renderDynamicRouteOnMap(rData, map, adminRouteLayers);
-        if (clientMap) renderDynamicRouteOnMap(rData, clientMap, clientRouteLayers);
+        if (clientMap && rData.envioId === activeSelectedEnvioId) {
+            renderDynamicRouteOnMap(rData, clientMap, clientRouteLayers);
+        }
     });
 
     renderVehicleList();
@@ -1286,6 +1415,12 @@ socket.on('init', (data) => {
     renderEnviosAdmin();
     renderEnviosCliente();
     renderChoferInfo();
+    if (data.usuario.rol === 'chofer') {
+        const chofer = document.getElementById('choferIdInput');
+        chofer.value = data.usuario.choferId;
+        chofer.disabled = true;
+        renderChoferInfo();
+    }
 });
 
 socket.on('vehiculo:bloqueado', (data) => {
@@ -1326,6 +1461,8 @@ socket.on('vehiculo:desbloqueado', (data) => {
 });
 
 socket.on('vehiculo:bloqueo_rechazado', (data) => {
+    console.error('BLOQUEO RECHAZADO:', data);
+    alert(data.message);
     if (selectedClientVehicleId === data.vehicleId) {
         stopVehicleSelectionTimer();
         selectedClientVehicleId = null;
@@ -1337,8 +1474,13 @@ socket.on('vehiculo:bloqueo_rechazado', (data) => {
             badge.className = 'badge bg-secondary';
             badge.textContent = 'Ninguno seleccionado';
         }
+
     }
-    if (originCoords && clientMap) updateNearbyVehicles();
+    if (clientMap) {
+        updateNearbyVehicles();
+    }
+
+    renderVehicleList();
 });
 
 socket.on('vehiculo:tiempo_agotado', (data) => {
@@ -1379,15 +1521,22 @@ socket.on('telemetry', (v) => {
 
 socket.on('ruta:dinamica', (routeData) => {
     activeDynamicRoutes[routeData.vehicleId] = routeData;
-    if (routeData.envioId) {
-        activeSelectedEnvioId = routeData.envioId;
+    // El administrador visualiza todas las rutas
+    if (map) {
+        renderDynamicRouteOnMap(routeData, map, adminRouteLayers);
     }
 
-    if (map) renderDynamicRouteOnMap(routeData, map, adminRouteLayers);
-    if (clientMap) renderDynamicRouteOnMap(routeData, clientMap, clientRouteLayers);
+    // El cliente visualiza únicamente la ruta de su pedido seleccionado
+    if (clientMap && activeSelectedEnvioId === routeData.envioId) {
 
-    updateDynamicRouteStatusBox(routeData);
-    renderEnviosCliente();
+        renderDynamicRouteOnMap(
+            routeData,
+            clientMap,
+            clientRouteLayers
+        );
+
+        updateDynamicRouteStatusBox(routeData);
+    } renderEnviosCliente();
     renderEnviosAdmin();
 });
 
