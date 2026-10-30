@@ -1,4 +1,4 @@
-// Servidor del Centro de Despacho Logístico - Fase 1 (Primer Parcial)
+// AMO - Centro de Despacho Logístico - Fase 1 (Primer Parcial)
 // Combina: WebSockets (Socket.io) para el dashboard en vivo + socket UDP
 // crudo para recibir la telemetría del simulador de flota y enviar comandos de ruta dinámica.
 //
@@ -17,13 +17,30 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
-// Login académico sin JWT ni base de datos: sesiones en memoria.
-const cuentas = [
-    { username: 'admin', password: 'admin123', rol: 'admin', nombre: 'Administrador' },
-    { username: 'juan', password: '1234', rol: 'cliente', nombre: 'Juan Pérez', clienteId: 'C1' },
-    { username: 'pedro', password: '4321', rol: 'cliente', nombre: 'Pedro García', clienteId: 'C2' },
-    { username: 'carlos', password: '1234', rol: 'chofer', nombre: 'Carlos Mendoza', choferId: 'CH1' }
-];
+// ---------------------------------------------------------------------
+// LOGIN (datos quemados, sin JWT ni base de datos: sesiones en memoria)
+// ---------------------------------------------------------------------
+let nextUsuarioId = 1;
+const usuarios = []; // { id, username, password, rol, nombre, activo, clienteId?, choferId? }
+function crearCuenta({ username, password, rol, nombre, clienteId, choferId }) {
+    const cuenta = {
+        id: `U${nextUsuarioId++}`,
+        username,
+        password,
+        rol,
+        nombre,
+        activo: true,
+        clienteId: clienteId || null,
+        choferId: choferId || null
+    };
+    usuarios.push(cuenta);
+    return cuenta;
+}
+function publicoUsuario(u) {
+    const { password, ...resto } = u;
+    return resto;
+}
+
 const sesiones = session({
     secret: process.env.SESSION_SECRET || 'clave-demostracion-academica-cambiar',
     resave: false,
@@ -34,13 +51,13 @@ app.use(express.json());
 app.use(sesiones);
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body || {};
-    const cuenta = cuentas.find(c => c.username === username && c.password === password);
+    const cuenta = usuarios.find(c => c.username === username && c.password === password);
     if (!cuenta) return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+    if (cuenta.activo === false) return res.status(403).json({ error: 'Esta cuenta está desactivada. Contacta al administrador.' });
     req.session.regenerate(err => {
         if (err) return res.status(500).json({ error: 'No se pudo iniciar sesión.' });
-        const { password: omitida, ...usuario } = cuenta;
-        req.session.usuario = usuario;
-        req.session.save(error => error ? res.status(500).json({ error: 'No se guardó la sesión.' }) : res.json({ usuario }));
+        req.session.usuario = publicoUsuario(cuenta);
+        req.session.save(error => error ? res.status(500).json({ error: 'No se guardó la sesión.' }) : res.json({ usuario: req.session.usuario }));
     });
 });
 app.get('/api/me', (req, res) => {
@@ -74,31 +91,45 @@ io.use((socket, next) => socket.request.session?.usuario ? next() : next(new Err
 // ---------------------------------------------------------------------
 // Estado en memoria de los vehículos y módulos
 // ---------------------------------------------------------------------
-const vehicles = {
-    V001: { vehicleId: 'V001', lat: -0.2295, lng: -78.5243, speed: 0, status: 'detenido', lastUpdate: Date.now() },
-    V002: { vehicleId: 'V002', lat: -0.1807, lng: -78.4678, speed: 0, status: 'detenido', lastUpdate: Date.now() },
-    V003: { vehicleId: 'V003', lat: -0.3000, lng: -78.4600, speed: 0, status: 'detenido', lastUpdate: Date.now() },
-};
+const vehicles = {}; // telemetría en vivo: vehicleId -> { lat, lng, speed, status, envioId, lastUpdate }
 
-const incidents = []; // Lista de incidencias reportadas
+// Información administrable del vehículo (ficha técnica, no telemetría)
+const vehiculosInfo = {}; // vehicleId -> { id, placa, marca, modelo, tipo, capacidadKg, baseLat, baseLng }
+function seedVehiculo(id, datos) {
+    vehiculosInfo[id] = { id, ...datos };
+    vehicles[id] = { vehicleId: id, lat: datos.baseLat, lng: datos.baseLng, speed: 0, status: 'detenido', lastUpdate: Date.now() };
+}
+seedVehiculo('V001', { placa: 'PBA-1234', marca: 'Chevrolet', modelo: 'NHR', tipo: 'Camioneta', capacidadKg: 1200, baseLat: -0.2295, baseLng: -78.5243 });
+seedVehiculo('V002', { placa: 'PCD-5678', marca: 'Hino', modelo: '300', tipo: 'Furgoneta', capacidadKg: 2500, baseLat: -0.1807, baseLng: -78.4678 });
+seedVehiculo('V003', { placa: 'PEF-9012', marca: 'Kia', modelo: 'K2700', tipo: 'Camión', capacidadKg: 3000, baseLat: -0.3000, baseLng: -78.4600 });
+let nextVehiculoId = 4;
+
+const novedades = []; // Lista de novedades/incidencias reportadas por choferes
 
 // Datos iniciales para que el sistema esté listo para evaluar sin configuración manual previa:
 const clientes = {
-    'C1': { id: 'C1', nombre: 'Juan Pérez (Cliente)', telefono: '0991234567' }
+    'C1': { id: 'C1', nombre: 'Juan Pérez (Cliente)', telefono: '0991234567', empresa: 'Distribuidora Andina S.A.' }
 };
 
 const choferes = {
-    'CH1': { id: 'CH1', nombre: 'Carlos Mendoza', cedula: '1712345678', vehicleId: 'V001' },
-    'CH2': { id: 'CH2', nombre: 'María López', cedula: '1723456789', vehicleId: 'V002' },
-    'CH3': { id: 'CH3', nombre: 'Pedro Gómez', cedula: '1734567890', vehicleId: 'V003' }
+    'CH1': { id: 'CH1', nombre: 'Carlos Mendoza', cedula: '1712345678', telefono: '0981111111', vehicleId: 'V001' },
+    'CH2': { id: 'CH2', nombre: 'María López', cedula: '1723456789', telefono: '0982222222', vehicleId: 'V002' },
+    'CH3': { id: 'CH3', nombre: 'Pedro Gómez', cedula: '1734567890', telefono: '0983333333', vehicleId: 'V003' }
 };
+
+// Cuentas de acceso "quemadas" (demo) - admin + una por cada chofer/cliente semilla
+crearCuenta({ username: 'admin', password: 'admin123', rol: 'admin', nombre: 'Administrador AMO' });
+crearCuenta({ username: 'juan', password: '1234', rol: 'cliente', nombre: 'Juan Pérez', clienteId: 'C1' });
+crearCuenta({ username: 'carlos', password: '1234', rol: 'chofer', nombre: 'Carlos Mendoza', choferId: 'CH1' });
+crearCuenta({ username: 'maria', password: '1234', rol: 'chofer', nombre: 'María López', choferId: 'CH2' });
+crearCuenta({ username: 'pedro', password: '1234', rol: 'chofer', nombre: 'Pedro Gómez', choferId: 'CH3' });
 
 const rutas = {};          // rutaId -> { id, nombre, origen, destino, vehicleId, choferId, estado }
 const envios = {};         // envioId -> { id, clienteId, descripcion, origen, destino, origenCoords, pedidoCoords, vehicleId, estado }
 const lockedVehicles = {}; // vehicleId -> { vehicleId, clienteId, socketId, lockedAt }
 const lockTimeouts = {};   // vehicleId -> timeoutId (temporizador de 15 segundos para confirmar pedido)
 const activeDynamicRoutes = {}; // vehicleId -> { vehicleId, envioId, waypoints, status }
-const vehicleAssignments = {}; //// Permanecen ocupados hasta que el administrador los libere.
+const vehicleAssignments = {}; // Permanecen ocupados hasta que el administrador los libere.
 
 // Estado visible de cada vehículo
 const vehicleStatuses = {};
@@ -107,6 +138,30 @@ let nextClienteId = 2;
 let nextChoferId = 4;
 let nextRutaId = 1;
 let nextEnvioId = 1;
+let nextNovedadId = 1;
+
+// ---------------------------------------------------------------------
+// NOTIFICACIONES (tiempo real + historial)
+// ---------------------------------------------------------------------
+const notificaciones = []; // historial completo: { id, para: 'rol:admin'|'cliente:C1'|'chofer:CH1', tipo, nivel, titulo, mensaje, data, leida, timestamp }
+let nextNotifId = 1;
+
+function notificar({ para, tipo, nivel, titulo, mensaje, data }) {
+    const n = {
+        id: `N${nextNotifId++}`,
+        para,
+        tipo,
+        nivel: nivel || 'info', // info | exito | advertencia | peligro
+        titulo,
+        mensaje,
+        data: data || null,
+        leida: false,
+        timestamp: Date.now()
+    };
+    notificaciones.push(n);
+    io.to(para).emit('notificacion', n);
+    return n;
+}
 
 // ---------------------------------------------------------------------
 // GATEWAY UDP (Lab 1: Sockets Datagrama crudos)
@@ -147,6 +202,17 @@ udpServer.on('message', (msg, rinfo) => {
         if (envios[envioId].estado !== status) {
             envios[envioId].estado = status;
             io.emit('envio:actualizado', envios[envioId]);
+            if (status === 'entregado') {
+                const envio = envios[envioId];
+                notificar({
+                    para: `cliente:${envio.clienteId}`,
+                    tipo: 'envio',
+                    nivel: 'exito',
+                    titulo: 'Entrega completada',
+                    mensaje: `Tu envío ${envioId} fue entregado con éxito.`,
+                    data: { envioId }
+                });
+            }
             // Actualizar el estado del vehículo en tiempo real
             if (vehicleAssignments[vehicleId] === envioId) {
                 actualizarEstadoVehiculo(vehicleId);
@@ -183,7 +249,6 @@ udpServer.bind(UDP_PORT, () => {
 
 // ---------------------------------------------------------------------
 // DESPACHO COORDINADOR DISTRIBUIDO: Iniciar Ruta Dinámica
-// Envía un datagrama UDP crudo al simulador de flota (puerto 41235)
 // ---------------------------------------------------------------------
 function iniciarRutaDinamica(envioId, vehicleId) {
     const envio = envios[envioId];
@@ -191,13 +256,8 @@ function iniciarRutaDinamica(envioId, vehicleId) {
     const vId = vehicleId || envio.vehicleId;
     if (!vId) return;
 
-    // 1. Posición inicial del auto (donde está detenido actualmente)
     const currentPos = vehicles[vId] || { lat: -0.2295, lng: -78.5243 };
-
-    // 2. Dónde está el pedido (punto de recogida seleccionado por el cliente)
     const pedidoCoords = envio.pedidoCoords || { lat: -0.1950, lng: -78.4850 };
-
-    // 3. Al origen (punto de entrega / retorno al origen del cliente)
     const origenCoords = envio.origenCoords || { lat: currentPos.lat, lng: currentPos.lng };
 
     const waypoints = [
@@ -206,81 +266,55 @@ function iniciarRutaDinamica(envioId, vehicleId) {
         { lat: Number(origenCoords.lat), lng: Number(origenCoords.lng), label: 'origen' }
     ];
 
-    activeDynamicRoutes[vId] = {
-        vehicleId: vId,
-        envioId,
-        waypoints,
-        status: 'hacia_pedido'
-    };
-
+    activeDynamicRoutes[vId] = { vehicleId: vId, envioId, waypoints, status: 'hacia_pedido' };
     envio.estado = 'hacia_pedido';
     envio.vehicleId = vId;
+    envio.waypoints = waypoints; // Copia permanente para poder ver la ruta después en el historial
 
-    // Enviar datagrama UDP al simulador de flota
-    const udpPayload = {
-        type: 'assign_route',
-        vehicleId: vId,
-        envioId,
-        waypoints
-    };
-
+    const udpPayload = { type: 'assign_route', vehicleId: vId, envioId, waypoints };
     const messageBuffer = Buffer.from(JSON.stringify(udpPayload));
     udpServer.send(messageBuffer, SIMULATOR_UDP_PORT, SIMULATOR_HOST, (err) => {
-        if (err) {
-            console.error(`[UDP out -> Simulador] Error al enviar comando de ruta para ${vId}:`, err);
-        } else {
-            console.log(`[UDP out -> Simulador] 🚀 Comando de ruta dinámica enviado para ${vId} (Envío ${envioId}) a ${SIMULATOR_HOST}:${SIMULATOR_UDP_PORT}`);
-        }
+        if (err) console.error(`[UDP out -> Simulador] Error al enviar comando de ruta para ${vId}:`, err);
+        else console.log(`[UDP out -> Simulador] Comando de ruta dinámica enviado para ${vId} (Envío ${envioId})`);
     });
 
-    // Notificar a todos los dashboards vía WebSockets
     io.emit('ruta:dinamica', activeDynamicRoutes[vId]);
     io.emit('envio:actualizado', envio);
+
+    const chofer = Object.values(choferes).find(c => c.vehicleId === vId);
+    if (chofer) {
+        const cuenta = usuarios.find(u => u.choferId === chofer.id);
+        if (cuenta) {
+            notificar({
+                para: `chofer:${chofer.id}`,
+                tipo: 'envio',
+                nivel: 'info',
+                titulo: 'Nuevo envío asignado',
+                mensaje: `Se te asignó el envío ${envioId}. Revisa la ruta en tu mapa.`,
+                data: { envioId }
+            });
+        }
+    }
 }
 
 function obtenerEstadoVehiculo(vehicleId) {
-
     const envioId = vehicleAssignments[vehicleId];
-
     if (envioId) {
-
         const envio = envios[envioId];
-
-        if (envio && envio.estado === 'entregado') {
-            return {
-                estado: 'entregado',
-                envioId
-            };
-        }
-
-        return {
-            estado: 'en_ruta',
-            envioId
-        };
+        if (envio && envio.estado === 'entregado') return { estado: 'entregado', envioId };
+        return { estado: 'en_ruta', envioId };
     }
-
-    if (lockedVehicles[vehicleId]) {
-        return {
-            estado: 'reservado',
-            envioId: null
-        };
-    }
-
-    return {
-        estado: 'disponible',
-        envioId: null
-    };
+    if (lockedVehicles[vehicleId]) return { estado: 'reservado', envioId: null };
+    return { estado: 'disponible', envioId: null };
 }
 
 function actualizarEstadoVehiculo(vehicleId) {
-
     vehicleStatuses[vehicleId] = obtenerEstadoVehiculo(vehicleId);
+    io.emit('vehiculo:estado', { vehicleId, ...vehicleStatuses[vehicleId] });
+}
 
-    // Notificar a todos los usuarios conectados
-    io.emit('vehiculo:estado', {
-        vehicleId,
-        ...vehicleStatuses[vehicleId]
-    });
+function vehiculoEstaOcupado(vehicleId) {
+    return Boolean(vehicleAssignments[vehicleId] || lockedVehicles[vehicleId]);
 }
 
 // ---------------------------------------------------------------------
@@ -289,13 +323,34 @@ function actualizarEstadoVehiculo(vehicleId) {
 io.on('connection', (socket) => {
     const usuario = socket.request.session.usuario;
     const esRol = rol => usuario.rol === rol;
-    const denegar = () => socket.emit('operacion:rechazada', { message: 'No tienes permisos para realizar esta acción.' });
-    console.log(`[Socket.io] Cliente conectado: ${socket.id}`);
+    const denegar = (msg) => socket.emit('operacion:rechazada', { message: msg || 'No tienes permisos para realizar esta acción.' });
+    console.log(`[Socket.io] Cliente conectado: ${socket.id} (${usuario.username}, ${usuario.rol})`);
+
+    socket.join(`rol:${usuario.rol}`);
+    if (usuario.clienteId) socket.join(`cliente:${usuario.clienteId}`);
+    if (usuario.choferId) socket.join(`chofer:${usuario.choferId}`);
+
+    const misNotificaciones = notificaciones.filter(n =>
+        n.para === `rol:${usuario.rol}` ||
+        (usuario.clienteId && n.para === `cliente:${usuario.clienteId}`) ||
+        (usuario.choferId && n.para === `chofer:${usuario.choferId}`)
+    ).slice(-50);
+
+    // Cada rol ve solo las novedades que le corresponden: el admin todas,
+    // el chofer solo las suyas, el cliente solo las de sus propios envíos.
+    let novedadesVisibles = novedades;
+    if (usuario.rol === 'chofer') {
+        novedadesVisibles = novedades.filter(n => n.choferId === usuario.choferId);
+    } else if (usuario.rol === 'cliente') {
+        const misEnvioIds = new Set(Object.values(envios).filter(e => e.clienteId === usuario.clienteId).map(e => e.id));
+        novedadesVisibles = novedades.filter(n => n.envioId && misEnvioIds.has(n.envioId));
+    }
 
     // Estado inicial: snapshot de todo lo que existe hasta ahora
     socket.emit('init', {
         vehicles,
-        incidents,
+        vehiculosInfo,
+        novedades: novedadesVisibles,
         clientes,
         choferes,
         rutas,
@@ -303,63 +358,43 @@ io.on('connection', (socket) => {
         lockedVehicles,
         vehicleStatuses,
         activeDynamicRoutes,
+        notificaciones: misNotificaciones,
+        usuarios: esRol('admin') ? usuarios.map(publicoUsuario) : undefined,
         usuario
     });
+
+    // ---------------- Notificaciones ----------------
+    socket.on('notificacion:leer', (data) => {
+        const n = notificaciones.find(x => x.id === data?.id);
+        if (n) n.leida = true;
+    });
+    socket.on('notificaciones:leer_todas', () => {
+        for (const n of notificaciones) {
+            if (n.para === `rol:${usuario.rol}` ||
+                (usuario.clienteId && n.para === `cliente:${usuario.clienteId}`) ||
+                (usuario.choferId && n.para === `chofer:${usuario.choferId}`)) {
+                n.leida = true;
+            }
+        }
+    });
+
     // LIBERAR VEHÍCULO - SOLO ADMINISTRADOR
     socket.on('vehiculo:liberar', (data) => {
-
-        const usuario = socket.request.session?.usuario;
-
-        if (!usuario || usuario.rol !== 'admin') {
-            socket.emit('operacion:rechazada', {
-                message: 'Solo el administrador puede liberar vehículos.'
-            });
-            return;
-        }
-
+        if (!esRol('admin')) return denegar('Solo el administrador puede liberar vehículos.');
         const { vehicleId } = data || {};
-
         const envioId = vehicleAssignments[vehicleId];
-
-        if (!envioId) {
-            return;
-        }
-
+        if (!envioId) return;
         const envio = envios[envioId];
-
-        // Solo liberar después de entregar el pedido
         if (!envio || envio.estado !== 'entregado') {
-
-            socket.emit('operacion:rechazada', {
-                message: 'El vehículo todavía no ha terminado su recorrido.'
-            });
-
+            socket.emit('operacion:rechazada', { message: 'El vehículo todavía no ha terminado su recorrido.' });
             return;
         }
-
-        // Liberar la unidad
         delete vehicleAssignments[vehicleId];
         delete activeDynamicRoutes[vehicleId];
-
-        // Detener la ruta anterior en el simulador
-        const comando = Buffer.from(JSON.stringify({
-            type: 'cancel_route',
-            vehicleId
-        }));
-
-        udpServer.send(
-            comando,
-            SIMULATOR_UDP_PORT,
-            SIMULATOR_HOST
-        );
-
+        const comando = Buffer.from(JSON.stringify({ type: 'cancel_route', vehicleId }));
+        udpServer.send(comando, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
         actualizarEstadoVehiculo(vehicleId);
-
-        io.emit('vehiculo:liberado', {
-            vehicleId,
-            envioId
-        });
-
+        io.emit('vehiculo:liberado', { vehicleId, envioId });
         console.log(`Vehículo ${vehicleId} liberado por administrador`);
     });
 
@@ -367,88 +402,44 @@ io.on('connection', (socket) => {
     socket.on('vehiculo:bloquear', (data) => {
         if (!esRol('cliente')) return denegar();
         const { vehicleId, clienteId } = data || {};
-        console.log('===== RESERVA =====');
-        console.log('Vehículo:', vehicleId);
-        console.log('Cliente:', clienteId);
-        console.log('Cliente autenticado:', usuario.clienteId);
-        console.log('Reserva confirmada:', vehicleAssignments[vehicleId]);
-        console.log('Bloqueo temporal:', lockedVehicles[vehicleId]);
-        console.log('Socket:', socket.id);
-        // Verificar que el vehículo no tenga un envío activo
         if (vehicleAssignments[vehicleId]) {
-
-            socket.emit('vehiculo:bloqueo_rechazado', {
-                vehicleId,
-                message: `El vehículo ${vehicleId} está ocupado.
-        Debes esperar hasta que sea liberado.`
-            });
-
+            socket.emit('vehiculo:bloqueo_rechazado', { vehicleId, message: `El vehículo ${vehicleId} está ocupado. Debes esperar hasta que sea liberado.` });
             return;
         }
         if (clienteId && clienteId !== usuario.clienteId) return denegar();
         if (!vehicleId) return;
 
-        // Validar que el vehículo tenga un chofer asignado
         const hasDriver = Object.values(choferes).some((ch) => ch.vehicleId === vehicleId);
         if (!hasDriver) {
-            socket.emit('vehiculo:bloqueo_rechazado', {
-                vehicleId,
-                message: `El vehículo ${vehicleId} no puede ser seleccionado porque no tiene chofer asignado.`
-            });
+            socket.emit('vehiculo:bloqueo_rechazado', { vehicleId, message: `El vehículo ${vehicleId} no puede ser seleccionado porque no tiene chofer asignado.` });
             return;
         }
 
         const currentLock = lockedVehicles[vehicleId];
-
-        // Si ya está bloqueado por otro socket, rechazar
         if (currentLock && currentLock.socketId !== socket.id) {
-            socket.emit('vehiculo:bloqueo_rechazado', {
-                vehicleId,
-                clienteId: currentLock.clienteId,
-                message: `El vehículo ${vehicleId} ya está bloqueado por otro cliente.`
-            });
+            socket.emit('vehiculo:bloqueo_rechazado', { vehicleId, clienteId: currentLock.clienteId, message: `El vehículo ${vehicleId} ya está bloqueado por otro cliente.` });
             return;
         }
 
-        // Si este socket tenía otro vehículo bloqueado previamente, liberarlo
         for (const [vId, lock] of Object.entries(lockedVehicles)) {
             if (lock.socketId === socket.id && vId !== vehicleId) {
-                if (lockTimeouts[vId]) {
-                    clearTimeout(lockTimeouts[vId]);
-                    delete lockTimeouts[vId];
-                }
+                if (lockTimeouts[vId]) { clearTimeout(lockTimeouts[vId]); delete lockTimeouts[vId]; }
                 delete lockedVehicles[vId];
                 io.emit('vehiculo:desbloqueado', { vehicleId: vId });
             }
         }
+        if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
 
-        if (lockTimeouts[vehicleId]) {
-            clearTimeout(lockTimeouts[vehicleId]);
-            delete lockTimeouts[vehicleId];
-        }
+        const LOCK_TIMEOUT_MS = 15000;
+        lockedVehicles[vehicleId] = { vehicleId, clienteId: usuario.clienteId, socketId: socket.id, lockedAt: Date.now(), expiresIn: LOCK_TIMEOUT_MS };
 
-        const LOCK_TIMEOUT_MS = 15000; // 15 segundos para confirmar pedido
-
-        lockedVehicles[vehicleId] = {
-            vehicleId,
-            clienteId: usuario.clienteId,
-            socketId: socket.id,
-            lockedAt: Date.now(),
-            expiresIn: LOCK_TIMEOUT_MS
-        };
-
-        // Temporizador de 15 segundos: si no se confirma el pedido, se deselecciona automáticamente
         lockTimeouts[vehicleId] = setTimeout(() => {
             if (lockedVehicles[vehicleId] && lockedVehicles[vehicleId].socketId === socket.id) {
                 console.log(`[Temporizador 15s] Vehículo ${vehicleId} deseleccionado por no confirmar pedido a tiempo.`);
                 delete lockedVehicles[vehicleId];
                 delete lockTimeouts[vehicleId];
-
                 io.emit('vehiculo:desbloqueado', { vehicleId });
-                socket.emit('vehiculo:tiempo_agotado', {
-                    vehicleId,
-                    message: `⏱️ Tiempo agotado (15 segundos): No confirmaste el pedido. El vehículo ${vehicleId} fue deseleccionado automáticamente.`
-                });
+                socket.emit('vehiculo:tiempo_agotado', { vehicleId, message: `Tiempo agotado (15 segundos): no confirmaste el pedido. El vehículo ${vehicleId} fue deseleccionado automáticamente.` });
             }
         }, LOCK_TIMEOUT_MS);
 
@@ -461,13 +452,9 @@ io.on('connection', (socket) => {
         if (!esRol('cliente')) return denegar();
         const { vehicleId } = data || {};
         if (!vehicleId) return;
-
         const currentLock = lockedVehicles[vehicleId];
         if (currentLock && currentLock.socketId === socket.id) {
-            if (lockTimeouts[vehicleId]) {
-                clearTimeout(lockTimeouts[vehicleId]);
-                delete lockTimeouts[vehicleId];
-            }
+            if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
             delete lockedVehicles[vehicleId];
             io.emit('vehiculo:desbloqueado', { vehicleId });
             actualizarEstadoVehiculo(vehicleId);
@@ -475,27 +462,168 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ---------------- Rol Administrador ----------------
-    socket.on('cliente:crear', (data) => {
+    // =================================================================
+    // ROL ADMINISTRADOR - CRUD completo
+    // =================================================================
+
+    // ---- Vehículos ----
+    socket.on('vehiculo:crear', (data, ack) => {
         if (!esRol('admin')) return denegar();
+        const { placa, marca, modelo, tipo, capacidadKg, baseLat, baseLng } = data || {};
+        if (!placa) return ack?.({ ok: false, error: 'La placa es obligatoria.' });
+        if (Object.values(vehiculosInfo).some(v => v.placa.toUpperCase() === placa.toUpperCase())) {
+            return ack?.({ ok: false, error: 'Ya existe un vehículo con esa placa.' });
+        }
+        const id = `V${String(nextVehiculoId++).padStart(3, '0')}`;
+        seedVehiculo(id, {
+            placa: placa.toUpperCase(),
+            marca: marca || '',
+            modelo: modelo || '',
+            tipo: tipo || 'Camioneta',
+            capacidadKg: Number(capacidadKg) || 500,
+            baseLat: Number(baseLat) || -0.2295,
+            baseLng: Number(baseLng) || -78.5243
+        });
+        vehicleStatuses[id] = obtenerEstadoVehiculo(id);
+        // Avisar al simulador por UDP (Lab1) para que empiece a emitir telemetría de este vehículo
+        const cmdAlta = Buffer.from(JSON.stringify({ type: 'add_vehicle', vehicleId: id, lat: vehiculosInfo[id].baseLat, lng: vehiculosInfo[id].baseLng }));
+        udpServer.send(cmdAlta, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
+        io.emit('vehiculo:ficha_creada', vehiculosInfo[id]);
+        io.emit('telemetry', vehicles[id]);
+        ack?.({ ok: true, vehiculo: vehiculosInfo[id] });
+    });
+
+    socket.on('vehiculo:editar', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { id, placa, marca, modelo, tipo, capacidadKg } = data || {};
+        const v = vehiculosInfo[id];
+        if (!v) return ack?.({ ok: false, error: 'Vehículo no encontrado.' });
+        if (placa && Object.values(vehiculosInfo).some(x => x.id !== id && x.placa.toUpperCase() === placa.toUpperCase())) {
+            return ack?.({ ok: false, error: 'Ya existe otro vehículo con esa placa.' });
+        }
+        if (placa) v.placa = placa.toUpperCase();
+        if (marca !== undefined) v.marca = marca;
+        if (modelo !== undefined) v.modelo = modelo;
+        if (tipo !== undefined) v.tipo = tipo;
+        if (capacidadKg !== undefined) v.capacidadKg = Number(capacidadKg) || v.capacidadKg;
+        io.emit('vehiculo:ficha_actualizada', v);
+        ack?.({ ok: true, vehiculo: v });
+    });
+
+    socket.on('vehiculo:eliminar', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { id } = data || {};
+        if (!vehiculosInfo[id]) return ack?.({ ok: false, error: 'Vehículo no encontrado.' });
+        if (Object.values(choferes).some(ch => ch.vehicleId === id)) {
+            return ack?.({ ok: false, error: 'No se puede eliminar: tiene un chofer asignado. Reasígnalo primero.' });
+        }
+        if (vehiculoEstaOcupado(id)) {
+            return ack?.({ ok: false, error: 'No se puede eliminar: el vehículo está reservado o tiene un envío activo.' });
+        }
+        delete vehiculosInfo[id];
+        delete vehicles[id];
+        delete vehicleStatuses[id];
+        const cmdBaja = Buffer.from(JSON.stringify({ type: 'remove_vehicle', vehicleId: id }));
+        udpServer.send(cmdBaja, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
+        io.emit('vehiculo:ficha_eliminada', { id });
+        ack?.({ ok: true });
+    });
+
+    // ---- Clientes ----
+    socket.on('cliente:crear', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { nombre, telefono, empresa, username, password } = data || {};
+        if (!nombre) return ack?.({ ok: false, error: 'El nombre es obligatorio.' });
+        if (username && usuarios.some(u => u.username === username)) {
+            return ack?.({ ok: false, error: 'Ese usuario de acceso ya existe.' });
+        }
         const id = `C${nextClienteId++}`;
-        clientes[id] = { id, nombre: data.nombre || 'Sin nombre', telefono: data.telefono || '' };
+        clientes[id] = { id, nombre, telefono: telefono || '', empresa: empresa || '' };
+        if (username && password) crearCuenta({ username, password, rol: 'cliente', nombre, clienteId: id });
         io.emit('cliente:creado', clientes[id]);
+        ack?.({ ok: true, cliente: clientes[id] });
     });
 
-    socket.on('chofer:crear', (data) => {
+    socket.on('cliente:editar', (data, ack) => {
         if (!esRol('admin')) return denegar();
-        const id = `CH${nextChoferId++}`;
-        choferes[id] = {
-            id,
-            nombre: data.nombre || 'Sin nombre',
-            cedula: data.cedula || '',
-            vehicleId: data.vehicleId || null
-        };
-        io.emit('chofer:creado', choferes[id]);
+        const { id, nombre, telefono, empresa } = data || {};
+        const c = clientes[id];
+        if (!c) return ack?.({ ok: false, error: 'Cliente no encontrado.' });
+        if (nombre !== undefined) c.nombre = nombre;
+        if (telefono !== undefined) c.telefono = telefono;
+        if (empresa !== undefined) c.empresa = empresa;
+        const cuenta = usuarios.find(u => u.clienteId === id);
+        if (cuenta && nombre) cuenta.nombre = nombre;
+        io.emit('cliente:actualizado', c);
+        ack?.({ ok: true, cliente: c });
     });
 
-    socket.on('ruta:crear', (data) => {
+    socket.on('cliente:eliminar', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { id } = data || {};
+        if (!clientes[id]) return ack?.({ ok: false, error: 'Cliente no encontrado.' });
+        const tieneEnviosActivos = Object.values(envios).some(e => e.clienteId === id && !['entregado', 'cancelado'].includes(e.estado));
+        if (tieneEnviosActivos) return ack?.({ ok: false, error: 'No se puede eliminar: tiene envíos activos.' });
+        delete clientes[id];
+        const idx = usuarios.findIndex(u => u.clienteId === id);
+        if (idx >= 0) usuarios.splice(idx, 1);
+        io.emit('cliente:eliminado', { id });
+        ack?.({ ok: true });
+    });
+
+    // ---- Choferes ----
+    socket.on('chofer:crear', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { nombre, cedula, telefono, vehicleId, username, password } = data || {};
+        if (!nombre) return ack?.({ ok: false, error: 'El nombre es obligatorio.' });
+        if (vehicleId && Object.values(choferes).some(ch => ch.vehicleId === vehicleId)) {
+            return ack?.({ ok: false, error: 'Ese vehículo ya tiene un chofer asignado.' });
+        }
+        if (username && usuarios.some(u => u.username === username)) {
+            return ack?.({ ok: false, error: 'Ese usuario de acceso ya existe.' });
+        }
+        const id = `CH${nextChoferId++}`;
+        choferes[id] = { id, nombre, cedula: cedula || '', telefono: telefono || '', vehicleId: vehicleId || null };
+        if (username && password) crearCuenta({ username, password, rol: 'chofer', nombre, choferId: id });
+        io.emit('chofer:creado', choferes[id]);
+        ack?.({ ok: true, chofer: choferes[id] });
+    });
+
+    socket.on('chofer:editar', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { id, nombre, cedula, telefono, vehicleId } = data || {};
+        const ch = choferes[id];
+        if (!ch) return ack?.({ ok: false, error: 'Chofer no encontrado.' });
+        if (vehicleId && vehicleId !== ch.vehicleId && Object.values(choferes).some(x => x.id !== id && x.vehicleId === vehicleId)) {
+            return ack?.({ ok: false, error: 'Ese vehículo ya tiene otro chofer asignado.' });
+        }
+        if (nombre !== undefined) ch.nombre = nombre;
+        if (cedula !== undefined) ch.cedula = cedula;
+        if (telefono !== undefined) ch.telefono = telefono;
+        if (vehicleId !== undefined) ch.vehicleId = vehicleId || null;
+        const cuenta = usuarios.find(u => u.choferId === id);
+        if (cuenta && nombre) cuenta.nombre = nombre;
+        io.emit('chofer:actualizado', ch);
+        ack?.({ ok: true, chofer: ch });
+    });
+
+    socket.on('chofer:eliminar', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { id } = data || {};
+        const ch = choferes[id];
+        if (!ch) return ack?.({ ok: false, error: 'Chofer no encontrado.' });
+        if (ch.vehicleId && vehiculoEstaOcupado(ch.vehicleId)) {
+            return ack?.({ ok: false, error: 'No se puede eliminar: su vehículo tiene un envío activo o está reservado.' });
+        }
+        delete choferes[id];
+        const idx = usuarios.findIndex(u => u.choferId === id);
+        if (idx >= 0) usuarios.splice(idx, 1);
+        io.emit('chofer:eliminado', { id });
+        ack?.({ ok: true });
+    });
+
+    // ---- Rutas planificadas ----
+    socket.on('ruta:crear', (data, ack) => {
         if (!esRol('admin')) return denegar();
         const id = `R${nextRutaId++}`;
         rutas[id] = {
@@ -508,29 +636,95 @@ io.on('connection', (socket) => {
             estado: 'planificada'
         };
         io.emit('ruta:creada', rutas[id]);
+        ack?.({ ok: true, ruta: rutas[id] });
     });
 
-    // ---------------- Rol Cliente & Rutas Dinámicas ----------------
-    socket.on('envio:crear', (data) => {
+    // ---- Liberar un vehículo a la fuerza (reservado, en ruta o "pegado") ----
+    socket.on('vehiculo:forzar_liberar', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { vehicleId } = data || {};
+        if (!vehicleId) return ack?.({ ok: false, error: 'Falta el vehículo.' });
+        let liberoAlgo = false;
+
+        if (lockedVehicles[vehicleId]) {
+            if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
+            delete lockedVehicles[vehicleId];
+            io.emit('vehiculo:desbloqueado', { vehicleId });
+            liberoAlgo = true;
+        }
+
+        const envioId = vehicleAssignments[vehicleId];
+        if (envioId) {
+            const envio = envios[envioId];
+            if (envio && !['entregado', 'cancelado'].includes(envio.estado)) {
+                envio.estado = 'cancelado';
+                io.emit('envio:actualizado', envio);
+                notificar({
+                    para: `cliente:${envio.clienteId}`,
+                    tipo: 'envio',
+                    nivel: 'advertencia',
+                    titulo: 'Envío cancelado',
+                    mensaje: `El administrador liberó el vehículo ${vehicleId} y tu envío ${envioId} quedó cancelado.`,
+                    data: { envioId }
+                });
+            }
+            delete vehicleAssignments[vehicleId];
+            delete activeDynamicRoutes[vehicleId];
+            const cmd = Buffer.from(JSON.stringify({ type: 'cancel_route', vehicleId }));
+            udpServer.send(cmd, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
+            liberoAlgo = true;
+        }
+
+        if (!liberoAlgo) return ack?.({ ok: false, error: 'Ese vehículo ya está disponible.' });
+        actualizarEstadoVehiculo(vehicleId);
+        ack?.({ ok: true });
+    });
+
+    // ---- Incidencias / novedades: gestión del admin ----
+    socket.on('incidencia:responder', (data, ack) => {
+        if (!esRol('admin')) return denegar();
+        const { id, estado, respuesta } = data || {};
+        const nov = novedades.find(n => n.id === id);
+        if (!nov) return ack?.({ ok: false, error: 'Novedad no encontrada.' });
+        nov.estado = estado || 'resuelta';
+        nov.respuesta = respuesta || '';
+        nov.respondidaEn = Date.now();
+        let destinoCliente = null;
+        if (nov.envioId && envios[nov.envioId]) destinoCliente = `cliente:${envios[nov.envioId].clienteId}`;
+        const emisor = io.to('rol:admin').to(`chofer:${nov.choferId}`);
+        (destinoCliente ? emisor.to(destinoCliente) : emisor).emit('novedad:actualizada', nov);
+        notificar({
+            para: `chofer:${nov.choferId}`,
+            tipo: 'novedad',
+            nivel: nov.estado === 'resuelta' ? 'exito' : 'info',
+            titulo: nov.estado === 'resuelta' ? 'Tu novedad fue resuelta' : 'El centro respondió tu novedad',
+            mensaje: respuesta || 'Revisa el detalle en tu historial de novedades.',
+            data: { novedadId: id }
+        });
+        ack?.({ ok: true, novedad: nov });
+    });
+
+    // =================================================================
+    // ROL CLIENTE & Rutas dinámicas
+    // =================================================================
+    socket.on('envio:crear', (data, ack) => {
         if (!esRol('cliente')) return denegar();
         if (data?.clienteId && data.clienteId !== usuario.clienteId) return denegar();
         let assignedVehicleId = data.vehicleId || null;
         if (assignedVehicleId) {
             const lock = lockedVehicles[assignedVehicleId];
             if (!lock || lock.socketId !== socket.id) {
-                socket.emit('operacion:rechazada', { message: 'Debes seleccionar y bloquear el vehículo antes de confirmar.' });
-                return;
+                const msg = 'Debes seleccionar y bloquear el vehículo antes de confirmar.';
+                socket.emit('operacion:rechazada', { message: msg });
+                return ack?.({ ok: false, error: msg });
             }
             if (Object.values(envios).some(e => e.vehicleId === assignedVehicleId && !['entregado', 'cancelado'].includes(e.estado))) {
-                socket.emit('operacion:rechazada', { message: 'El vehículo ya tiene un envío activo.' });
-                return;
+                const msg = 'El vehículo ya tiene un envío activo.';
+                socket.emit('operacion:rechazada', { message: msg });
+                return ack?.({ ok: false, error: msg });
             }
-        }
-        if (assignedVehicleId) {
             const hasDriver = Object.values(choferes).some((ch) => ch.vehicleId === assignedVehicleId);
-            if (!hasDriver) {
-                assignedVehicleId = null; // No permitir vehículo sin chofer
-            }
+            if (!hasDriver) assignedVehicleId = null;
         }
 
         const id = `E${nextEnvioId++}`;
@@ -538,66 +732,54 @@ io.on('connection', (socket) => {
             id,
             clienteId: usuario.clienteId,
             descripcion: data.descripcion || '',
+            pesoKg: Number(data.pesoKg) || null,
             origen: data.origen || '',
             destino: data.destino || '',
             origenCoords: data.origenCoords || { lat: -0.2295, lng: -78.5243 },
             pedidoCoords: data.pedidoCoords || { lat: -0.1950, lng: -78.4850 },
             vehicleId: assignedVehicleId,
-            estado: 'pendiente'
+            estado: 'pendiente',
+            creadoEn: Date.now()
         };
 
-        // Si el vehículo estaba bloqueado temporalmente por este cliente, liberarlo del mutex de UI y cancelar temporizador
         if (assignedVehicleId) {
-            if (lockTimeouts[assignedVehicleId]) {
-                clearTimeout(lockTimeouts[assignedVehicleId]);
-                delete lockTimeouts[assignedVehicleId];
-            }
-            if (lockedVehicles[assignedVehicleId]) {
-                delete lockedVehicles[assignedVehicleId];
-                io.emit('vehiculo:desbloqueado', { vehicleId: assignedVehicleId });
-            }
-        }
-        // Registrar la asignación definitiva del vehículo
-        if (assignedVehicleId) {
-
-            // Evitar doble asignación
+            if (lockTimeouts[assignedVehicleId]) { clearTimeout(lockTimeouts[assignedVehicleId]); delete lockTimeouts[assignedVehicleId]; }
+            if (lockedVehicles[assignedVehicleId]) { delete lockedVehicles[assignedVehicleId]; io.emit('vehiculo:desbloqueado', { vehicleId: assignedVehicleId }); }
             if (vehicleAssignments[assignedVehicleId]) {
-
-                socket.emit('operacion:rechazada', {
-                    message: 'Este vehículo ya tiene un envío asignado.'
-                });
-
+                const msg = 'Este vehículo ya tiene un envío asignado.';
+                socket.emit('operacion:rechazada', { message: msg });
                 delete envios[id];
-                return;
+                return ack?.({ ok: false, error: msg });
             }
-
             vehicleAssignments[assignedVehicleId] = id;
         }
 
         io.emit('envio:creado', envios[id]);
         if (assignedVehicleId) {
             actualizarEstadoVehiculo(assignedVehicleId);
-        }
-        // Si tiene vehículo asignado, iniciar automáticamente la ruta dinámica
-        if (assignedVehicleId) {
             iniciarRutaDinamica(id, assignedVehicleId);
         }
+        notificar({
+            para: 'rol:admin',
+            tipo: 'envio',
+            nivel: 'info',
+            titulo: 'Nuevo envío solicitado',
+            mensaje: `${clientes[usuario.clienteId]?.nombre || 'Un cliente'} solicitó el envío ${id}.`,
+            data: { envioId: id }
+        });
+        ack?.({ ok: true, envio: envios[id] });
     });
 
-    // Cuando un cliente o administrador selecciona un pedido para activar/rastrear su ruta dinámica
     socket.on('envio:seleccionar', (data) => {
         if (!esRol('admin') && !esRol('cliente')) return denegar();
         const { envioId } = data || {};
         if (!envioId || !envios[envioId]) return;
-
         const envio = envios[envioId];
         if (esRol('cliente') && envio.clienteId !== usuario.clienteId) return denegar();
         console.log(`[Socket.io] Pedido ${envioId} seleccionado por ${socket.id}`);
-
         if (envio.vehicleId) {
             iniciarRutaDinamica(envioId, envio.vehicleId);
         } else {
-            // Si el pedido no tenía vehículo, asignar el primer vehículo libre con chofer
             const freeVehicle = Object.values(choferes).map(c => c.vehicleId).find(v => v && (!activeDynamicRoutes[v] || activeDynamicRoutes[v].status === 'entregado'));
             if (freeVehicle) {
                 envio.vehicleId = freeVehicle;
@@ -606,29 +788,103 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ---------------- Rol Chofer ----------------
-    socket.on('reportIncident', (data) => {
+    // =================================================================
+    // ROL CHOFER - Confirmar entrega y reportar novedad
+    // =================================================================
+    socket.on('envio:entregar', (data, ack) => {
         if (!esRol('chofer')) return denegar();
-        const incident = {
-            id: incidents.length + 1,
-            vehicleId: data.vehicleId || 'desconocido',
+        const chofer = choferes[usuario.choferId];
+        const vehicleId = chofer?.vehicleId;
+        const { envioId } = data || {};
+        const envio = envios[envioId];
+        if (!envio) return ack?.({ ok: false, error: 'Envío no encontrado.' });
+        if (!vehicleId || envio.vehicleId !== vehicleId) return ack?.({ ok: false, error: 'Este envío no corresponde a tu vehículo.' });
+        if (['entregado', 'cancelado'].includes(envio.estado)) return ack?.({ ok: false, error: 'Este envío ya fue cerrado.' });
+
+        envio.estado = 'entregado';
+        io.emit('envio:actualizado', envio);
+        notificar({
+            para: `cliente:${envio.clienteId}`,
+            tipo: 'envio',
+            nivel: 'exito',
+            titulo: 'Entrega completada',
+            mensaje: `Tu envío ${envioId} fue entregado con éxito.`,
+            data: { envioId }
+        });
+
+        // Liberar el vehículo automáticamente: ya no hay que esperar a que el admin lo haga a mano
+        delete vehicleAssignments[vehicleId];
+        delete activeDynamicRoutes[vehicleId];
+        const cmd = Buffer.from(JSON.stringify({ type: 'cancel_route', vehicleId }));
+        udpServer.send(cmd, SIMULATOR_UDP_PORT, SIMULATOR_HOST);
+        actualizarEstadoVehiculo(vehicleId);
+        ack?.({ ok: true, envio });
+    });
+    const TIPOS_NOVEDAD = ['accidente', 'falla_mecanica', 'trafico', 'retraso', 'paquete', 'cliente_ausente', 'otro'];
+    const AFECTAN_ENTREGA = ['accidente', 'falla_mecanica', 'trafico', 'retraso'];
+    socket.on('novedad:reportar', (data, ack) => {
+        if (!esRol('chofer')) return denegar();
+        const { tipo, prioridad, descripcion } = data || {};
+        if (!TIPOS_NOVEDAD.includes(tipo)) return ack?.({ ok: false, error: 'Tipo de novedad inválido.' });
+        if (!descripcion || !descripcion.trim()) return ack?.({ ok: false, error: 'Describe brevemente lo ocurrido.' });
+
+        const chofer = choferes[usuario.choferId];
+        const vehicleId = chofer?.vehicleId || null;
+        const envioId = vehicleId ? vehicleAssignments[vehicleId] || null : null;
+        const ubicacion = vehicleId && vehicles[vehicleId] ? { lat: vehicles[vehicleId].lat, lng: vehicles[vehicleId].lng } : null;
+
+        const nov = {
+            id: `NV${nextNovedadId++}`,
             choferId: usuario.choferId,
-            description: data.description || 'Sin descripcion',
+            choferNombre: chofer?.nombre || usuario.nombre,
+            vehicleId,
+            envioId,
+            tipo,
+            prioridad: ['baja', 'media', 'alta', 'critica'].includes(prioridad) ? prioridad : 'media',
+            descripcion: descripcion.trim(),
+            ubicacion,
+            estado: 'abierta',
+            respuesta: null,
             timestamp: Date.now()
         };
-        incidents.push(incident);
-        io.emit('incident', incident);
+        novedades.push(nov);
+        io.to('rol:admin').to(`chofer:${nov.choferId}`).emit('novedad:nueva', nov);
+        if (envioId) {
+            const envioRef = envios[envioId];
+            if (envioRef) io.to(`cliente:${envioRef.clienteId}`).emit('novedad:nueva', nov);
+        }
+
+        const nivelMap = { baja: 'info', media: 'info', alta: 'advertencia', critica: 'peligro' };
+        notificar({
+            para: 'rol:admin',
+            tipo: 'novedad',
+            nivel: nivelMap[nov.prioridad] || 'info',
+            titulo: `Novedad reportada por ${nov.choferNombre}`,
+            mensaje: nov.descripcion,
+            data: { novedadId: nov.id, vehicleId, prioridad: nov.prioridad }
+        });
+
+        if (envioId && AFECTAN_ENTREGA.includes(tipo)) {
+            const envio = envios[envioId];
+            if (envio) {
+                notificar({
+                    para: `cliente:${envio.clienteId}`,
+                    tipo: 'novedad',
+                    nivel: 'advertencia',
+                    titulo: 'Novedad en tu envío',
+                    mensaje: `Tu envío ${envioId} presentó un inconveniente: ${nov.descripcion}`,
+                    data: { envioId, novedadId: nov.id }
+                });
+            }
+        }
+        ack?.({ ok: true, novedad: nov });
     });
 
     socket.on('disconnect', () => {
         console.log(`[Socket.io] Cliente desconectado: ${socket.id}`);
-        // Liberar cualquier vehículo que este cliente haya dejado bloqueado al desconectarse
         for (const [vehicleId, lock] of Object.entries(lockedVehicles)) {
             if (lock.socketId === socket.id) {
-                if (lockTimeouts[vehicleId]) {
-                    clearTimeout(lockTimeouts[vehicleId]);
-                    delete lockTimeouts[vehicleId];
-                }
+                if (lockTimeouts[vehicleId]) { clearTimeout(lockTimeouts[vehicleId]); delete lockTimeouts[vehicleId]; }
                 delete lockedVehicles[vehicleId];
                 io.emit('vehiculo:desbloqueado', { vehicleId });
                 console.log(`[Socket.io] Vehículo ${vehicleId} liberado por desconexión`);
@@ -639,6 +895,6 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Servidor escuchando en http://localhost:${PORT}`);
+    console.log(`AMO - Servidor escuchando en http://localhost:${PORT}`);
     console.log(`Gateway UDP en puerto ${UDP_PORT} | Coordinando con simulador en puerto ${SIMULATOR_UDP_PORT}`);
 });

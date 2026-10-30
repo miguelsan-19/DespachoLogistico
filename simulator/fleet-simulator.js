@@ -108,6 +108,20 @@ client.on('message', (msg, rinfo) => {
                 delete dynamicRoutes[vehicleId];
                 console.log(`[UDP in] Ruta dinámica cancelada para ${vehicleId}`);
             }
+        } else if (data.type === 'add_vehicle') {
+            const { vehicleId, lat, lng } = data;
+            if (vehicleId) {
+                fixedPositions[vehicleId] = { lat: Number(lat) || PUNTO_UNICO.lat, lng: Number(lng) || PUNTO_UNICO.lng };
+                console.log(`[UDP in] Vehículo nuevo registrado en el simulador: ${vehicleId}`);
+            }
+        } else if (data.type === 'remove_vehicle') {
+            const { vehicleId } = data;
+            if (vehicleId) {
+                delete fixedPositions[vehicleId];
+                delete dynamicRoutes[vehicleId];
+                delete fallbackState[vehicleId];
+                console.log(`[UDP in] Vehículo dado de baja en el simulador: ${vehicleId}`);
+            }
         }
     } catch (err) {
         console.warn('[UDP in] Error procesando comando del backend:', err.message);
