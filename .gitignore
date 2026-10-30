@@ -1,6 +1,19 @@
+# Dependencias
 node_modules/
-npm-debug.log*
+**/node_modules/
+
+# Variables de entorno (si luego agregan credenciales de BD, API keys, etc.)
 .env
 .env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo
 .DS_Store
 Thumbs.db
+
+# Editores
+.vscode/
+.idea/

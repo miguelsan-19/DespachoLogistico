@@ -3,52 +3,279 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Centro de Despacho Logístico</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<title>NAM · Centro de Despacho Logístico</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <h1>Centro de Despacho Logístico</h1>
-        <div id="connectionStatus" class="status disconnected">Conectando...</div>
-    </header>
+<div class="amo-app">
 
-    <main>
-        <section id="dashboard">
-            <div class="metric">
-                <span class="metric-value" id="activeCount">0</span>
-                <span class="metric-label">Unidades activas</span>
+    <!-- ============ SIDEBAR ============ -->
+    <nav class="amo-sidebar">
+        <div class="amo-brand">
+            <div class="mark">A</div>
+            <div>
+                <div class="name">NAM</div>
+                <div class="tag">Despacho logístico</div>
             </div>
-            <div class="metric">
-                <span class="metric-value" id="avgSpeed">0</span>
-                <span class="metric-label">Velocidad promedio (km/h)</span>
+        </div>
+        <ul class="amo-nav" id="amoNav"></ul>
+        <div class="amo-sidebar-foot">NAM &copy; 2026 · Fase 1</div>
+    </nav>
+
+    <!-- ============ MAIN ============ -->
+    <div class="amo-main">
+        <header class="amo-topbar">
+            <div>
+                <div class="title" id="topTitle">Panel</div>
+                <div class="sub" id="topSub">&nbsp;</div>
             </div>
-            <div class="metric">
-                <span class="metric-value" id="incidentCount">0</span>
-                <span class="metric-label">Incidencias reportadas</span>
+            <div class="spacer"></div>
+            <div class="amo-conn" id="connEstado"><span class="dot"></span><span>Conectando...</span></div>
+            <div style="position:relative">
+                <button class="amo-icon-btn" id="btnNotif"><i class="bi bi-bell"></i><span class="dot-badge d-none" id="notifBadge">0</span></button>
+                <div class="amo-notif-panel" id="notifPanel">
+                    <div class="amo-notif-head">
+                        <span>Notificaciones</span>
+                        <a href="#" class="ms-auto small" id="btnMarcarTodas">Marcar todas leídas</a>
+                    </div>
+                    <div id="notifList"></div>
+                </div>
             </div>
+            <div class="amo-user">
+                <div class="amo-avatar" id="userAvatar">?</div>
+                <div>
+                    <div class="nm" id="userNombre">Cargando...</div>
+                    <div class="rl" id="userRol">&nbsp;</div>
+                </div>
+                <button class="amo-icon-btn" id="cerrarSesion" title="Cerrar sesión"><i class="bi bi-box-arrow-right"></i></button>
+            </div>
+        </header>
 
-            <h2>Unidades</h2>
-            <ul id="vehicleList"></ul>
+        <main class="amo-content" id="amoContent">
 
-            <h2>Alertas recientes</h2>
-            <ul id="alertList"></ul>
+            <!-- ================= ADMIN: Monitoreo ================= -->
+            <section class="amo-section" data-view="monitoreo" data-roles="admin">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3"><div class="amo-card amo-kpi"><div class="amo-kpi-icon blue"><i class="bi bi-truck"></i></div><div><div class="amo-kpi-value" id="kpiUnidades">0</div><div class="amo-kpi-label">Unidades activas</div></div></div></div>
+                    <div class="col-md-3"><div class="amo-card amo-kpi"><div class="amo-kpi-icon green"><i class="bi bi-speedometer2"></i></div><div><div class="amo-kpi-value" id="kpiVelocidad">0</div><div class="amo-kpi-label">Velocidad prom. (km/h)</div></div></div></div>
+                    <div class="col-md-3"><div class="amo-card amo-kpi"><div class="amo-kpi-icon amber"><i class="bi bi-megaphone"></i></div><div><div class="amo-kpi-value" id="kpiNovedades">0</div><div class="amo-kpi-label">Novedades abiertas</div></div></div></div>
+                    <div class="col-md-3"><div class="amo-card amo-kpi"><div class="amo-kpi-icon red"><i class="bi bi-box-seam"></i></div><div><div class="amo-kpi-value" id="kpiEnvios">0</div><div class="amo-kpi-label">Envíos en curso</div></div></div></div>
+                </div>
+                <div class="row g-3">
+                    <div class="col-xl-8">
+                        <div class="amo-card" style="height:560px;overflow:hidden">
+                            <div class="amo-card-head"><h2>Flota en vivo</h2></div>
+                            <div id="map" style="height:calc(100% - 57px)"></div>
+                        </div>
+                    </div>
+                    <div class="col-xl-4 d-flex flex-column gap-3">
+                        <div class="amo-card">
+                            <div class="amo-card-head"><h2>Unidades</h2></div>
+                            <div id="vehicleList"></div>
+                        </div>
+                        <div class="amo-card">
+                            <div class="amo-card-head"><h2>Alertas recientes</h2></div>
+                            <div id="alertList" style="max-height:170px;overflow-y:auto"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
-            <h2>Reportar incidencia</h2>
-            <form id="incidentForm">
-                <input type="text" id="incidentVehicle" placeholder="ID de vehículo (ej. V001)" required>
-                <input type="text" id="incidentDesc" placeholder="Descripción" required>
-                <button type="submit">Reportar</button>
-            </form>
-        </section>
+            <!-- ================= ADMIN: Vehículos ================= -->
+            <section class="amo-section" data-view="vehiculos" data-roles="admin">
+                <div class="amo-card mb-3">
+                    <div class="amo-card-head"><h2>Vehículos</h2><button class="btn btn-primary btn-sm ms-auto" id="btnNuevoVehiculo"><i class="bi bi-plus-lg me-1"></i>Nuevo vehículo</button></div>
+                    <div class="table-responsive"><table class="amo-table">
+                        <thead><tr><th>Placa</th><th>Marca / Modelo</th><th>Tipo</th><th>Capacidad</th><th>Estado</th><th></th></tr></thead>
+                        <tbody id="tablaVehiculos"></tbody>
+                    </table></div>
+                </div>
+            </section>
 
-        <section id="mapSection">
-            <div id="map"></div>
-        </section>
-    </main>
+            <!-- ================= ADMIN: Choferes ================= -->
+            <section class="amo-section" data-view="choferes" data-roles="admin">
+                <div class="amo-card mb-3">
+                    <div class="amo-card-head"><h2>Choferes</h2><button class="btn btn-primary btn-sm ms-auto" id="btnNuevoChofer"><i class="bi bi-plus-lg me-1"></i>Nuevo chofer</button></div>
+                    <div class="table-responsive"><table class="amo-table">
+                        <thead><tr><th>Nombre</th><th>Cédula</th><th>Teléfono</th><th>Vehículo</th><th></th></tr></thead>
+                        <tbody id="tablaChoferes"></tbody>
+                    </table></div>
+                </div>
+            </section>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
+            <!-- ================= ADMIN: Clientes ================= -->
+            <section class="amo-section" data-view="clientes" data-roles="admin">
+                <div class="amo-card mb-3">
+                    <div class="amo-card-head"><h2>Clientes</h2><button class="btn btn-primary btn-sm ms-auto" id="btnNuevoCliente"><i class="bi bi-plus-lg me-1"></i>Nuevo cliente</button></div>
+                    <div class="table-responsive"><table class="amo-table">
+                        <thead><tr><th>Nombre</th><th>Empresa</th><th>Teléfono</th><th></th></tr></thead>
+                        <tbody id="tablaClientes"></tbody>
+                    </table></div>
+                </div>
+            </section>
+
+            <!-- ================= ADMIN: Rutas ================= -->
+            <section class="amo-section" data-view="rutas" data-roles="admin">
+                <div class="amo-card mb-3">
+                    <div class="amo-card-head"><h2>Rutas planificadas</h2><button class="btn btn-primary btn-sm ms-auto" id="btnNuevaRuta"><i class="bi bi-plus-lg me-1"></i>Nueva ruta</button></div>
+                    <div class="table-responsive"><table class="amo-table">
+                        <thead><tr><th>Ruta</th><th>Trayecto</th><th>Vehículo</th><th>Chofer</th><th>Estado</th></tr></thead>
+                        <tbody id="tablaRutas"></tbody>
+                    </table></div>
+                </div>
+            </section>
+
+            <!-- ================= ADMIN: Envíos ================= -->
+            <section class="amo-section" data-view="envios" data-roles="admin">
+                <div class="amo-card mb-3">
+                    <div class="amo-card-head"><h2>Todos los envíos</h2></div>
+                    <div class="table-responsive"><table class="amo-table">
+                        <thead><tr><th>Código</th><th>Cliente</th><th>Descripción</th><th>Vehículo</th><th>Estado</th><th></th></tr></thead>
+                        <tbody id="tablaEnviosAdmin"></tbody>
+                    </table></div>
+                </div>
+            </section>
+
+            <!-- ================= ADMIN: Novedades ================= -->
+            <section class="amo-section" data-view="novedades" data-roles="admin">
+                <div class="amo-card mb-3">
+                    <div class="amo-card-head"><h2>Novedades e incidencias</h2><span class="sub ms-auto" id="novResumen"></span></div>
+                    <div class="table-responsive"><table class="amo-table">
+                        <thead><tr><th>Chofer</th><th>Tipo</th><th>Prioridad</th><th>Descripción</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
+                        <tbody id="tablaNovedades"></tbody>
+                    </table></div>
+                </div>
+            </section>
+
+            <!-- ================= CLIENTE: Inicio / Nuevo envío ================= -->
+            <section class="amo-section" data-view="nuevo-envio" data-roles="cliente">
+                <div class="row g-3">
+                    <div class="col-xl-7">
+                        <div class="amo-card mb-3">
+                            <div class="amo-card-head"><h2>Nuevo envío</h2><div class="sub ms-auto">Describe el paquete y marca los puntos en el mapa</div></div>
+                            <div class="amo-card-body">
+                                <form id="envioForm">
+                                    <div class="mb-3">
+                                        <label class="form-label small fw-semibold">Descripción del paquete</label>
+                                        <input type="text" class="form-control" id="envioDescripcion" placeholder="Ej. Repuestos de cómputo" required>
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="form-label small fw-semibold">Peso aproximado (kg)</label>
+                                        <input type="number" min="0.1" step="0.1" class="form-control" style="max-width:160px" id="envioPeso" placeholder="Ej. 45">
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
+                                        <label class="form-label small fw-semibold mb-0">Marca los puntos en el mapa</label>
+                                        <span class="amo-badge b-blue" id="clientCoordsLabel">Haz clic en el mapa</span>
+                                    </div>
+                                    <div id="clientMap" class="amo-map mb-2" style="height:260px"></div>
+                                    <div class="btn-group btn-group-sm w-100 mb-3" role="group">
+                                        <input type="radio" class="btn-check" name="mapTarget" id="targetDestino" value="destino" checked autocomplete="off">
+                                        <label class="btn btn-outline-primary" for="targetDestino"><i class="bi bi-box-seam me-1"></i>Punto de recogida</label>
+                                        <input type="radio" class="btn-check" name="mapTarget" id="targetOrigen" value="origen" autocomplete="off">
+                                        <label class="btn btn-outline-success" for="targetOrigen"><i class="bi bi-house-door me-1"></i>Punto de entrega</label>
+                                    </div>
+                                    <div class="row g-2 mb-3">
+                                        <div class="col-6"><input type="text" class="form-control form-control-sm" id="envioDestino" placeholder="Dirección de recogida" required></div>
+                                        <div class="col-6"><input type="text" class="form-control form-control-sm" id="envioOrigen" placeholder="Dirección de entrega" required></div>
+                                    </div>
+
+                                    <div id="nearbyVehiclesSection" style="display:none" class="mb-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="small fw-bold">Vehículos disponibles cerca</span>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span class="amo-badge b-slate" id="selectedVehicleBadge">Ninguno seleccionado</span>
+                                                <span class="amo-badge b-red d-none" id="selectionCountdownBadge">15s</span>
+                                            </div>
+                                        </div>
+                                        <div id="nearbyVehiclesList" class="amo-pick-grid"></div>
+                                        <input type="hidden" id="envioVehiculo" value="">
+                                    </div>
+
+                                    <button type="submit" class="btn btn-primary w-100 fw-bold py-2"><i class="bi bi-send me-1"></i>Crear envío y despachar ruta</button>
+                                </form>
+
+                                <div id="dynamicRouteStatusBox" class="alert alert-primary py-2 px-3 mt-3 d-none" style="font-size:.84rem">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="fw-bold" id="dynRouteVehicleTitle">Ruta en curso</span>
+                                        <span class="amo-badge b-blue" id="dynRouteStatusBadge">Hacia el pedido</span>
+                                    </div>
+                                    <div class="small" id="dynRouteStepDesc"></div>
+                                    <div class="progress mt-2" style="height:6px"><div id="dynRouteProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:25%"></div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-5">
+                        <div class="amo-card">
+                            <div class="amo-card-head"><h2>Mis envíos</h2></div>
+                            <div id="envioListCliente"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= CHOFER: Jornada ================= -->
+            <section class="amo-section" data-view="jornada" data-roles="chofer">
+                <div class="row g-3">
+                    <div class="col-xl-6">
+                        <div class="amo-card mb-3">
+                            <div class="amo-card-head"><h2>Mi vehículo y ruta</h2></div>
+                            <div class="amo-card-body" id="choferInfo">Cargando...</div>
+                        </div>
+                    </div>
+                    <div class="col-xl-6">
+                        <div class="amo-card">
+                            <div class="amo-card-head"><h2>Reportar novedad</h2></div>
+                            <div class="amo-card-body">
+                                <form id="novedadForm">
+                                    <label class="form-label small fw-semibold">Tipo de novedad</label>
+                                    <select class="form-select mb-3" id="novedadTipo" required>
+                                        <option value="">Selecciona...</option>
+                                        <option value="accidente">Accidente</option>
+                                        <option value="falla_mecanica">Falla mecánica</option>
+                                        <option value="trafico">Tráfico / vía cerrada</option>
+                                        <option value="retraso">Retraso en la entrega</option>
+                                        <option value="paquete">Problema con el paquete</option>
+                                        <option value="cliente_ausente">Cliente ausente</option>
+                                        <option value="otro">Otro</option>
+                                    </select>
+                                    <label class="form-label small fw-semibold">Prioridad</label>
+                                    <select class="form-select mb-3" id="novedadPrioridad">
+                                        <option value="baja">Baja</option>
+                                        <option value="media" selected>Media</option>
+                                        <option value="alta">Alta</option>
+                                        <option value="critica">Crítica</option>
+                                    </select>
+                                    <label class="form-label small fw-semibold">Descripción</label>
+                                    <textarea class="form-control mb-3" id="novedadDescripcion" rows="3" placeholder="Cuéntanos qué pasó" required></textarea>
+                                    <button type="submit" class="btn btn-danger w-100 fw-bold"><i class="bi bi-megaphone me-1"></i>Enviar reporte</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="amo-card mt-3">
+                    <div class="amo-card-head"><h2>Mis novedades reportadas</h2></div>
+                    <div id="misNovedades"></div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+</div>
+
+<div class="amo-toasts" id="amoToasts"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="common.js"></script>
+<script src="admin.js"></script>
+<script src="portal.js"></script>
 </body>
 </html>

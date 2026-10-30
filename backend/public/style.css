@@ -1,88 +1,212 @@
-* { box-sizing: border-box; }
+/* =====================================================================
+   AMO - Centro de Despacho Logístico
+   Sistema de diseño profesional (paleta + componentes reutilizables)
+   ===================================================================== */
 
+:root {
+    --amo-primary: #2563eb;
+    --amo-primary-dark: #1d4ed8;
+    --amo-primary-soft: #eff6ff;
+    --amo-accent: #f59e0b;
+    --amo-success: #16a34a;
+    --amo-danger: #dc2626;
+    --amo-warning: #d97706;
+    --amo-text: #0f172a;
+    --amo-muted: #64748b;
+    --amo-border: #e2e8f0;
+    --amo-bg: #f4f6fb;
+    --amo-sidebar-from: #0f172a;
+    --amo-sidebar-to: #111c33;
+    --amo-radius: 14px;
+    --amo-shadow: 0 1px 3px rgba(15, 23, 42, .08), 0 1px 2px rgba(15, 23, 42, .06);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
     margin: 0;
-    font-family: system-ui, -apple-system, sans-serif;
-    background: #0f1117;
-    color: #e6e8ee;
+    background: var(--amo-bg);
+    color: var(--amo-text);
+    font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    font-size: .92rem;
+    -webkit-font-smoothing: antialiased;
 }
+a { text-decoration: none; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 
-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 24px;
-    background: #171a23;
-    border-bottom: 1px solid #2a2e3a;
+/* ===================== Layout general ===================== */
+.amo-app { display: flex; min-height: 100vh; }
+
+.amo-sidebar {
+    width: 230px; flex-shrink: 0; min-height: 100vh;
+    background: linear-gradient(180deg, var(--amo-sidebar-from), var(--amo-sidebar-to));
+    color: #cbd5e1; display: flex; flex-direction: column; padding: 18px 14px;
+    position: sticky; top: 0; height: 100vh;
 }
-
-header h1 { font-size: 1.2rem; margin: 0; }
-
-.status {
-    padding: 4px 12px;
-    border-radius: 999px;
-    font-size: 0.8rem;
-    font-weight: 600;
+.amo-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 22px; }
+.amo-brand .mark {
+    width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--amo-primary), #60a5fa);
+    display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; font-size: 1.1rem;
+    box-shadow: 0 4px 10px rgba(37, 99, 235, .4);
 }
-.status.connected { background: #1d4d33; color: #6ee7a0; }
-.status.disconnected { background: #4d1d1d; color: #e76e6e; }
+.amo-brand .name { color: #fff; font-weight: 800; font-size: 1.15rem; letter-spacing: .5px; line-height: 1; }
+.amo-brand .tag { font-size: .66rem; color: #93a4c3; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
 
-main {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    height: calc(100vh - 57px);
+.amo-nav { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.amo-nav-link {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+    color: #cbd5e1; font-weight: 600; font-size: .85rem; cursor: pointer; transition: all .15s;
 }
-
-#dashboard {
-    padding: 16px 20px;
-    overflow-y: auto;
-    border-right: 1px solid #2a2e3a;
+.amo-nav-link i { font-size: 1.05rem; width: 20px; text-align: center; }
+.amo-nav-link:hover { background: rgba(255, 255, 255, .06); color: #fff; }
+.amo-nav-link.active { background: var(--amo-primary); color: #fff; box-shadow: 0 2px 8px rgba(37, 99, 235, .4); }
+.amo-nav-link .badge-count {
+    margin-left: auto; background: rgba(255, 255, 255, .15); color: #fff; font-size: .68rem;
+    padding: 1px 7px; border-radius: 20px; font-weight: 700;
 }
+.amo-nav-link.active .badge-count { background: rgba(255, 255, 255, .25); }
+.amo-sidebar-foot { margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, .08); font-size: .7rem; color: #64748b; }
 
-.metric {
-    display: inline-block;
-    width: 31%;
-    text-align: center;
-    background: #171a23;
-    border-radius: 10px;
-    padding: 10px 4px;
-    margin-right: 2%;
-    margin-bottom: 14px;
+.amo-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.amo-topbar {
+    height: 62px; flex-shrink: 0; background: #fff; border-bottom: 1px solid var(--amo-border);
+    display: flex; align-items: center; gap: 14px; padding: 0 22px; position: sticky; top: 0; z-index: 20;
 }
-.metric-value { display: block; font-size: 1.4rem; font-weight: 700; }
-.metric-label { display: block; font-size: 0.7rem; color: #9aa0ad; margin-top: 2px; }
+.amo-topbar .title { font-weight: 800; font-size: 1.05rem; }
+.amo-topbar .sub { font-size: .76rem; color: var(--amo-muted); }
+.amo-topbar .spacer { flex: 1; }
+.amo-conn { display: flex; align-items: center; gap: 6px; font-size: .76rem; font-weight: 600; color: var(--amo-muted); }
+.amo-conn .dot { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; }
+.amo-conn.ok .dot { background: var(--amo-success); box-shadow: 0 0 0 3px rgba(22, 163, 74, .15); }
+.amo-conn.bad .dot { background: var(--amo-danger); }
 
-h2 { font-size: 0.95rem; margin: 18px 0 8px; color: #9aa0ad; }
-
-#vehicleList, #alertList { list-style: none; padding: 0; margin: 0; }
-
-#vehicleList li, #alertList li {
-    background: #171a23;
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin-bottom: 6px;
-    font-size: 0.85rem;
+.amo-icon-btn {
+    width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--amo-border); background: #fff;
+    display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; color: #475569;
 }
-
-#alertList li { border-left: 3px solid #e76e6e; }
-
-#incidentForm { display: flex; flex-direction: column; gap: 8px; }
-#incidentForm input {
-    background: #171a23;
-    border: 1px solid #2a2e3a;
-    border-radius: 6px;
-    padding: 8px;
-    color: #e6e8ee;
+.amo-icon-btn:hover { background: #f8fafc; }
+.amo-icon-btn .dot-badge {
+    position: absolute; top: -4px; right: -4px; min-width: 17px; height: 17px; border-radius: 20px; background: var(--amo-danger);
+    color: #fff; font-size: .62rem; font-weight: 800; display: flex; align-items: center; justify-content: center; padding: 0 4px; border: 2px solid #fff;
 }
-#incidentForm button {
-    background: #3b6fe0;
-    border: none;
-    border-radius: 6px;
-    padding: 8px;
-    color: white;
-    font-weight: 600;
-    cursor: pointer;
+.amo-user { display: flex; align-items: center; gap: 10px; padding-left: 12px; border-left: 1px solid var(--amo-border); }
+.amo-avatar {
+    width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--amo-primary), #60a5fa);
+    color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: .85rem; flex-shrink: 0;
 }
+.amo-user .nm { font-weight: 700; font-size: .83rem; line-height: 1.15; }
+.amo-user .rl { font-size: .7rem; color: var(--amo-muted); }
 
-#mapSection { position: relative; }
-#map { height: 100%; width: 100%; }
+.amo-content { padding: 20px 22px 40px; flex: 1; }
+
+/* ===================== Dropdown de notificaciones ===================== */
+.amo-notif-panel {
+    position: absolute; top: 56px; right: 22px; width: 360px; max-height: 420px; overflow-y: auto;
+    background: #fff; border: 1px solid var(--amo-border); border-radius: var(--amo-radius); box-shadow: 0 16px 40px rgba(15, 23, 42, .16);
+    z-index: 50; display: none;
+}
+.amo-notif-panel.open { display: block; }
+.amo-notif-head { display: flex; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--amo-border); font-weight: 700; font-size: .85rem; }
+.amo-notif-item { display: flex; gap: 10px; padding: 11px 14px; border-bottom: 1px solid #f1f5f9; cursor: pointer; }
+.amo-notif-item:hover { background: #f8fafc; }
+.amo-notif-item.unread { background: #eff6ff; }
+.amo-notif-item .ic { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: .8rem; }
+.amo-notif-item .tt { font-weight: 700; font-size: .78rem; margin-bottom: 2px; }
+.amo-notif-item .ms { font-size: .76rem; color: var(--amo-muted); line-height: 1.3; }
+.amo-notif-item .tm { font-size: .68rem; color: #94a3b8; margin-top: 3px; }
+.amo-notif-empty { padding: 30px 14px; text-align: center; color: var(--amo-muted); font-size: .82rem; }
+
+/* ===================== Tarjetas, KPIs, tablas ===================== */
+.amo-card { background: #fff; border: 1px solid var(--amo-border); border-radius: var(--amo-radius); box-shadow: var(--amo-shadow); }
+.amo-card-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--amo-border); }
+.amo-card-head h2 { font-size: .98rem; font-weight: 800; margin: 0; }
+.amo-card-head .sub { font-size: .76rem; color: var(--amo-muted); }
+.amo-card-body { padding: 18px; }
+
+.amo-kpi { display: flex; align-items: center; gap: 12px; padding: 16px 18px; }
+.amo-kpi-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0; }
+.amo-kpi-icon.blue { background: #dbeafe; color: #1d4ed8; }
+.amo-kpi-icon.green { background: #dcfce7; color: #15803d; }
+.amo-kpi-icon.amber { background: #fef3c7; color: #b45309; }
+.amo-kpi-icon.red { background: #fee2e2; color: #b91c1c; }
+.amo-kpi-value { font-size: 1.35rem; font-weight: 800; line-height: 1; }
+.amo-kpi-label { font-size: .72rem; color: var(--amo-muted); margin-top: 3px; }
+
+.amo-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.amo-table th { text-align: left; font-size: .68rem; text-transform: uppercase; letter-spacing: .4px; color: var(--amo-muted); padding: 9px 14px; border-bottom: 1px solid var(--amo-border); background: #f8fafc; }
+.amo-table td { padding: 11px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.amo-table tr:last-child td { border-bottom: none; }
+.amo-table tr:hover td { background: #f8fafc; }
+
+.amo-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: .7rem; font-weight: 700; }
+.b-blue { background: #dbeafe; color: #1d4ed8; }
+.b-green { background: #dcfce7; color: #15803d; }
+.b-amber { background: #fef3c7; color: #b45309; }
+.b-red { background: #fee2e2; color: #b91c1c; }
+.b-slate { background: #e2e8f0; color: #334155; }
+.b-purple { background: #ede9fe; color: #6d28d9; }
+
+.amo-empty { text-align: center; padding: 34px 10px; color: var(--amo-muted); font-size: .85rem; }
+
+/* ===================== Selector tipo "asiento" (vehículos/choferes) ===================== */
+.amo-pick-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.amo-pick {
+    border: 2px solid var(--amo-border); border-radius: 10px; padding: 8px 12px; font-size: .78rem; font-weight: 700;
+    cursor: pointer; background: #fff; color: #475569; transition: all .15s;
+}
+.amo-pick:hover { border-color: #93c5fd; }
+.amo-pick.selected { border-color: var(--amo-primary); background: var(--amo-primary-soft); color: var(--amo-primary); }
+.amo-pick.taken { border-color: #fcd34d; background: #fffbeb; color: #b45309; cursor: not-allowed; }
+.amo-pick.disabled { opacity: .5; cursor: not-allowed; }
+
+/* ===================== Toasts ===================== */
+.amo-toasts { position: fixed; bottom: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 2000; width: 320px; }
+.amo-toast { background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(15, 23, 42, .18); border-left: 4px solid var(--amo-primary); padding: 12px 14px; animation: amoIn .18s ease; }
+.amo-toast.exito { border-color: var(--amo-success); }
+.amo-toast.advertencia { border-color: var(--amo-warning); }
+.amo-toast.peligro { border-color: var(--amo-danger); }
+.amo-toast .tt { font-weight: 800; font-size: .83rem; margin-bottom: 2px; }
+.amo-toast .ms { font-size: .78rem; color: var(--amo-muted); }
+@keyframes amoIn { from { transform: translateX(16px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ===================== Modal de formularios ===================== */
+.amo-modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, .5); display: flex; align-items: center; justify-content: center; z-index: 1500; padding: 20px; }
+.amo-modal { background: #fff; border-radius: var(--amo-radius); width: 100%; max-width: 460px; max-height: 88vh; overflow-y: auto; box-shadow: 0 25px 60px rgba(15, 23, 42, .3); }
+.amo-modal-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--amo-border); }
+.amo-modal-head h3 { font-size: .98rem; font-weight: 800; margin: 0; }
+.amo-modal-body { padding: 18px 20px; }
+.amo-modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--amo-border); }
+
+/* ===================== Login (split screen) ===================== */
+.amo-login-wrap { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr; }
+@media (max-width: 900px) { .amo-login-wrap { grid-template-columns: 1fr; } .amo-login-hero { display: none; } }
+.amo-login-hero {
+    background: radial-gradient(circle at 20% 20%, rgba(96, 165, 250, .35), transparent 45%), radial-gradient(circle at 85% 80%, rgba(245, 158, 11, .25), transparent 40%), linear-gradient(160deg, #0f172a, #1e3a5f);
+    color: #fff; display: flex; flex-direction: column; justify-content: center; padding: 60px 64px;
+}
+.amo-login-hero .mark { width: 54px; height: 54px; border-radius: 14px; background: linear-gradient(135deg, var(--amo-primary), #60a5fa); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.5rem; margin-bottom: 26px; }
+.amo-login-hero h1 { font-size: 2rem; font-weight: 800; line-height: 1.2; margin-bottom: 14px; }
+.amo-login-hero p { color: #b7c3dd; font-size: .95rem; max-width: 420px; line-height: 1.6; }
+.amo-feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 40px; max-width: 460px; }
+.amo-feat { background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1); border-radius: 12px; padding: 14px; }
+.amo-feat i { font-size: 1.2rem; color: #60a5fa; margin-bottom: 8px; display: block; }
+.amo-feat .t { font-size: .74rem; font-weight: 700; color: #e2e8f0; }
+
+.amo-login-form-wrap { display: flex; align-items: center; justify-content: center; padding: 40px; }
+.amo-login-form { width: 100%; max-width: 380px; }
+.amo-login-form h2 { font-weight: 800; font-size: 1.4rem; margin-bottom: 4px; }
+.amo-login-form .sub { color: var(--amo-muted); font-size: .85rem; margin-bottom: 26px; }
+.amo-demo-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border: 1px solid var(--amo-border); border-radius: 10px; font-size: .78rem; cursor: pointer; margin-bottom: 7px; transition: all .15s; }
+.amo-demo-row:hover { border-color: #93c5fd; background: var(--amo-primary-soft); }
+.amo-demo-row .rol-tag { font-weight: 700; color: var(--amo-primary); }
+
+/* Utilidades */
+.amo-text-muted { color: var(--amo-muted); }
+.amo-fade { animation: amoFade .2s ease; }
+@keyframes amoFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.amo-map { border-radius: 12px; overflow: hidden; border: 1px solid var(--amo-border); }
+.amo-section { display: none; }
+.amo-section.active { display: block; animation: amoFade .2s ease; }
